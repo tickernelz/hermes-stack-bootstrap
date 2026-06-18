@@ -9,6 +9,7 @@ import getpass
 import json
 import os
 import shutil
+import re
 import shlex
 import subprocess
 import sys
@@ -16,7 +17,7 @@ import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping, Sequence
 
 from .config_merge import build_target_config, read_config, write_config
 from .env_template import (
@@ -102,8 +103,43 @@ class InstallPlan:
     steps: tuple[PlanStep, ...]
 
 
+_WINDOWS_DRIVE_PATH_RE = re.compile(r"^([A-Za-z]):[\\/](.*)$")
+
+
+def path_for_shell(value: str | Path) -> str:
+    """Return a POSIX-shell-friendly display/execution path for Git Bash plans.
+
+    The installer can run under Windows Python while the visible terminal is Git
+    Bash. Native Windows paths like C:\\Users\\... must not be emitted into bash
+    snippets as-is; Git Bash expects /c/Users/....
+    """
+    text = str(value)
+    match = _WINDOWS_DRIVE_PATH_RE.match(text)
+    if not match:
+        return text
+    drive, rest = match.groups()
+    normalized_rest = rest.replace("\\", "/")
+    return f"/{drive.lower()}/{normalized_rest}"
+
+
 def shell_quote(value: str | Path) -> str:
-    return shlex.quote(str(value))
+    return shlex.quote(path_for_shell(value))
+
+
+def shell_join(args: Sequence[str | Path]) -> str:
+    return " ".join(shell_quote(arg) for arg in args)
+
+
+def env_prefix_for_shell(env: Mapping[str, str] | None) -> str:
+    if not env:
+        return ""
+    return " ".join(f"{key}={shell_quote(value)}" for key, value in env.items())
+
+
+def render_command(command: str | Sequence[str | Path], *, env: Mapping[str, str] | None = None) -> str:
+    command_text = command if isinstance(command, str) else shell_join(command)
+    env_prefix = env_prefix_for_shell(env)
+    return f"{env_prefix} {command_text}" if env_prefix else command_text
 
 
 def target_home_for(base_home: Path, profile: str) -> Path:
@@ -229,9 +265,9 @@ def resolve_progress_tail_ref(ref: str) -> str:
 
 
 def progress_tail_install_command(*, base_home: Path, profile: str, ref: str) -> str:
-    env_parts = ["HPT_INTERACTIVE=0", f"HERMES_HOME={base_home}"]
+    env_parts = ["HPT_INTERACTIVE=0", f"HERMES_HOME={shell_quote(base_home)}"]
     if profile != "default":
-        env_parts.append(f"HPT_PROFILES={profile}")
+        env_parts.append(f"HPT_PROFILES={shell_quote(profile)}")
     return f"curl -fsSL {progress_tail_install_url(ref)} | env {' '.join(env_parts)} bash"
 
 
@@ -248,22 +284,26 @@ def skill_vendor_dir(target_home: Path, name: str) -> Path:
 
 
 def skill_repo_clone_command(repo_url: str, dest: Path) -> str:
-    return f"git clone --depth=1 {repo_url} {dest}"
+    return f"git clone --depth=1 {shell_quote(repo_url)} {shell_quote(dest)}"
 
 
 def skill_repo_update_command(dest: Path) -> str:
-    return f"git -C {dest} pull --ff-only"
+    return f"git -C {shell_quote(dest)} pull --ff-only"
+
+
+def mnemosyne_pip_package_list(mode: str) -> list[str]:
+    normalized = mode.strip().lower() or "full-local"
+    if normalized == "full-local":
+        return ["mnemosyne-memory[all]", "sqlite-vec"]
+    if normalized == "hybrid":
+        return ["mnemosyne-memory[embeddings]", "sqlite-vec"]
+    if normalized == "full-online":
+        return ["mnemosyne-memory", "sqlite-vec", "numpy"]
+    raise ValueError(f"Unknown Mnemosyne mode: {mode}")
 
 
 def mnemosyne_pip_packages(mode: str) -> str:
-    normalized = mode.strip().lower() or "full-local"
-    if normalized == "full-local":
-        return "'mnemosyne-memory[all]' sqlite-vec"
-    if normalized == "hybrid":
-        return "'mnemosyne-memory[embeddings]' sqlite-vec"
-    if normalized == "full-online":
-        return "mnemosyne-memory sqlite-vec numpy"
-    raise ValueError(f"Unknown Mnemosyne mode: {mode}")
+    return shell_join(mnemosyne_pip_package_list(mode))
 
 
 def soul_answers_from_options(options: InstallerOptions) -> SoulAnswers:
@@ -306,7 +346,7 @@ def build_plan(options: InstallerOptions) -> InstallPlan:
         steps.append(
             PlanStep(
                 "Install hermes-lcm from upstream README",
-                f"git clone {LCM_REPO} {lcm_dir}",
+                f"git clone {shell_quote(LCM_REPO)} {shell_quote(lcm_dir)}",
                 "If the directory already exists, the installer runs git pull --ff-only instead.",
             )
         )
@@ -452,11 +492,23 @@ def print_plan(plan: InstallPlan) -> None:
             print(f"   {step.notes}")
 
 
-def run_command(command: str, *, dry_run: bool) -> None:
+def run_command(
+    command: str | Sequence[str | Path],
+    *,
+    dry_run: bool,
+    env: Mapping[str, str] | None = None,
+) -> None:
     if dry_run:
-        print(f"DRY-RUN $ {command}")
+        print(f"DRY-RUN $ {render_command(command, env=env)}")
         return
-    subprocess.run(command, shell=True, check=True)
+    merged_env = None
+    if env:
+        merged_env = os.environ.copy()
+        merged_env.update(env)
+    if isinstance(command, str):
+        subprocess.run(command, shell=True, check=True, env=merged_env)
+    else:
+        subprocess.run([str(part) for part in command], check=True, env=merged_env)
 
 
 def backup_files(plan: InstallPlan) -> Path | None:
@@ -477,24 +529,32 @@ def install_lcm(plan: InstallPlan) -> None:
         return
     lcm_dir = plan.target_home / "plugins" / "hermes-lcm"
     if lcm_dir.exists():
-        run_command(f"git -C {lcm_dir} pull --ff-only", dry_run=plan.options.dry_run)
+        run_command(["git", "-C", str(lcm_dir), "pull", "--ff-only"], dry_run=plan.options.dry_run)
     else:
         lcm_dir.parent.mkdir(parents=True, exist_ok=True)
-        run_command(f"git clone {LCM_REPO} {lcm_dir}", dry_run=plan.options.dry_run)
+        run_command(["git", "clone", LCM_REPO, str(lcm_dir)], dry_run=plan.options.dry_run)
 
 
 def install_mnemosyne(plan: InstallPlan) -> None:
     if plan.options.skip_mnemosyne:
         return
     hermes_py = runtime_python_for_options(plan.options)
-    hermes_py_cmd = shell_quote(hermes_py)
     run_command(
-        f"{hermes_py_cmd} -m pip install --upgrade --no-cache-dir {mnemosyne_pip_packages(plan.options.mnemosyne_mode)}",
+        [
+            str(hermes_py),
+            "-m",
+            "pip",
+            "install",
+            "--upgrade",
+            "--no-cache-dir",
+            *mnemosyne_pip_package_list(plan.options.mnemosyne_mode),
+        ],
         dry_run=plan.options.dry_run,
     )
     run_command(
-        f"HERMES_HOME={shell_quote(plan.target_home)} {hermes_py_cmd} -m mnemosyne.install",
+        [str(hermes_py), "-m", "mnemosyne.install"],
         dry_run=plan.options.dry_run,
+        env={"HERMES_HOME": str(plan.target_home)},
     )
 
 
@@ -511,15 +571,15 @@ def install_progress_tail(plan: InstallPlan) -> None:
         profile=plan.options.profile,
         ref=ref,
     )
-    run_command(command, dry_run=plan.options.dry_run)
+    run_command(["bash", "-lc", command], dry_run=plan.options.dry_run)
 
 
 def install_skill_repo(repo_url: str, dest: Path, *, dry_run: bool) -> None:
     if dest.exists():
-        run_command(skill_repo_update_command(dest), dry_run=dry_run)
+        run_command(["git", "-C", str(dest), "pull", "--ff-only"], dry_run=dry_run)
     else:
         dest.parent.mkdir(parents=True, exist_ok=True)
-        run_command(skill_repo_clone_command(repo_url, dest), dry_run=dry_run)
+        run_command(["git", "clone", "--depth=1", repo_url, str(dest)], dry_run=dry_run)
 
 
 def install_optional_skills(plan: InstallPlan) -> None:
@@ -642,17 +702,17 @@ def run_verification(plan: InstallPlan) -> None:
     if plan.options.dry_run:
         print("DRY-RUN verification skipped")
         return
-    hermes_bin = shell_quote(hermes_bin_for_options(plan.options))
-    commands = [
-        f"{hermes_bin} memory status",
-        f"{hermes_bin} mnemosyne stats",
-        f"{hermes_bin} plugins list --plain --no-bundled",
+    hermes_bin = hermes_bin_for_options(plan.options)
+    commands: list[list[str]] = [
+        [hermes_bin, "memory", "status"],
+        [hermes_bin, "mnemosyne", "stats"],
+        [hermes_bin, "plugins", "list", "--plain", "--no-bundled"],
     ]
     if plan.options.profile != "default":
         commands = [
-            f"{hermes_bin} -p {plan.options.profile} memory status",
-            f"{hermes_bin} -p {plan.options.profile} mnemosyne stats",
-            f"{hermes_bin} -p {plan.options.profile} plugins list --plain --no-bundled",
+            [hermes_bin, "-p", plan.options.profile, "memory", "status"],
+            [hermes_bin, "-p", plan.options.profile, "mnemosyne", "stats"],
+            [hermes_bin, "-p", plan.options.profile, "plugins", "list", "--plain", "--no-bundled"],
         ]
     for command in commands:
         run_command(command, dry_run=False)

@@ -107,6 +107,8 @@ In that case it follows the `exec` target and uses the sibling `python` / `pytho
 
 The filesystem scan is deliberately bounded and prunes pseudo/noisy trees such as `/proc`, `/sys`, `/dev`, `/run`, `/tmp`, `/mnt`, and `/media`. It searches for an executable named `hermes`; it does **not** assume `/opt` or any other fixed install directory.
 
+On Git Bash/MINGW64, the plan preview normalizes native Windows drive paths (`C:\\Users\\...`) to Git Bash-style paths (`/c/Users/...`) so copy-pasted preview commands are readable and executable. Actual Python package installs use subprocess argument vectors instead of `shell=True`, so Windows Python paths are not broken by POSIX quoting or `cmd.exe` single-quote behavior.
+
 Interactive mode lets you override the detected profile base manually. For explicit shared-runtime installs:
 
 ```bash

@@ -11,6 +11,7 @@ from hermes_stack_bootstrap.cli import (
     base_home_from_config_path,
     build_plan,
     build_plans,
+    install_mnemosyne,
     parse_profiles,
     print_plan,
     validate_runtime_options,
@@ -143,6 +144,63 @@ class CliPlanTests(unittest.TestCase):
             "/usr/local/bin/hermes memory status && /usr/local/bin/hermes mnemosyne stats && /usr/local/bin/hermes plugins list --plain --no-bundled",
             commands,
         )
+
+    def test_build_plan_normalizes_windows_python_path_for_git_bash_commands(self):
+        options = InstallerOptions(
+            base_home=Path("C:/Users/Nix/AppData/Local/hermes"),
+            profile="default",
+            yes=True,
+            dry_run=True,
+            hermes_python=Path(r"C:\Users\Nix\AppData\Local\hermes\hermes-agent\venv\Scripts\python"),
+            hermes_python_source="discovered",
+            mnemosyne_mode="hybrid",
+        )
+
+        plan = build_plan(options)
+        commands = [step.command for step in plan.steps if step.command]
+
+        self.assertIn(
+            "/c/Users/Nix/AppData/Local/hermes/hermes-agent/venv/Scripts/python -m pip install --upgrade --no-cache-dir 'mnemosyne-memory[embeddings]' sqlite-vec",
+            commands,
+        )
+        self.assertIn(
+            "HERMES_HOME=/c/Users/Nix/AppData/Local/hermes /c/Users/Nix/AppData/Local/hermes/hermes-agent/venv/Scripts/python -m mnemosyne.install",
+            commands,
+        )
+
+    def test_install_mnemosyne_uses_argument_vector_for_windows_python_path(self):
+        options = InstallerOptions(
+            base_home=Path("C:/Users/Nix/AppData/Local/hermes"),
+            profile="default",
+            yes=True,
+            dry_run=False,
+            hermes_python=Path(r"C:\Users\Nix\AppData\Local\hermes\hermes-agent\venv\Scripts\python"),
+            hermes_python_source="discovered",
+            mnemosyne_mode="hybrid",
+        )
+        plan = build_plan(options)
+
+        with patch("hermes_stack_bootstrap.cli.run_command") as run_command:
+            install_mnemosyne(plan)
+
+        pip_args = run_command.call_args_list[0].args[0]
+        install_args = run_command.call_args_list[1].args[0]
+        self.assertIsInstance(pip_args, list)
+        self.assertEqual(
+            pip_args,
+            [
+                r"C:\Users\Nix\AppData\Local\hermes\hermes-agent\venv\Scripts\python",
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                "--no-cache-dir",
+                "mnemosyne-memory[embeddings]",
+                "sqlite-vec",
+            ],
+        )
+        self.assertEqual(install_args[:3], [r"C:\Users\Nix\AppData\Local\hermes\hermes-agent\venv\Scripts\python", "-m", "mnemosyne.install"])
+        self.assertEqual(run_command.call_args_list[1].kwargs["env"]["HERMES_HOME"], "C:/Users/Nix/AppData/Local/hermes")
 
     def test_build_plan_uses_mode_specific_mnemosyne_install_commands(self):
         hybrid = InstallerOptions(
