@@ -19,7 +19,7 @@ memory:
   mnemosyne:
     auto_sleep: true
     profile_isolation: false
-    vector_type: float32
+    vector_type: int8
     skip_contexts: cron,flush,subagent,background,skill_loop
 
 platform_toolsets:

@@ -27,12 +27,25 @@ DEFAULT_LCM_ENV = {
 
 
 DEFAULT_LOCAL_MNEMOSYNE_ENV = {
-    "MNEMOSYNE_LLM_ENABLED": "true",
+    # Force the local LLM fallback path and keep remote LLM URLs/API keys out of public installs.
     "MNEMOSYNE_FORCE_LOCAL": "1",
+    "MNEMOSYNE_LLM_ENABLED": "true",
+    "MNEMOSYNE_LLM_REPO": "openbmb/MiniCPM5-1B-GGUF",
+    "MNEMOSYNE_LLM_FILE": "MiniCPM5-1B-Q4_K_M.gguf",
     "MNEMOSYNE_LLM_N_CTX": "2048",
-    "MNEMOSYNE_LLM_MAX_TOKENS": "512",
+    "MNEMOSYNE_LLM_MAX_TOKENS": "2048",
     "MNEMOSYNE_LLM_N_THREADS": "4",
-    "MNEMOSYNE_VEC_TYPE": "float32",
+    # Explicit local fastembed model/dim so an unrelated OPENAI/OpenRouter key cannot silently switch behavior.
+    "MNEMOSYNE_EMBEDDING_MODEL": "BAAI/bge-small-en-v1.5",
+    "MNEMOSYNE_EMBEDDING_DIM": "384",
+    # Mnemosyne docs default to int8 as the good storage/accuracy tradeoff for local use.
+    "MNEMOSYNE_VEC_TYPE": "int8",
+    "MNEMOSYNE_WM_MAX_ITEMS": "10000",
+    "MNEMOSYNE_WM_TTL_HOURS": "48",
+    "MNEMOSYNE_EP_LIMIT": "50000",
+    "MNEMOSYNE_SLEEP_BATCH": "3000",
+    "MNEMOSYNE_SP_MAX": "1000",
+    "MNEMOSYNE_RECENCY_HALFLIFE": "168",
 }
 
 

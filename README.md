@@ -6,6 +6,12 @@ Opinionated bootstrapper for a small local-first [Hermes Agent](https://hermes-a
 - [`mnemosyne-memory`](https://github.com/AxDSan/mnemosyne) as the Hermes memory provider, configured for local-first use
 - [`hermes-progress-tail`](https://github.com/tickernelz/hermes-progress-tail) for live progress/status bubbles
 
+Optional skill packs can also be installed:
+
+- [`obra/superpowers`](https://github.com/obra/superpowers)
+- private HMX knowledge repo (`git@gitlab.com:hashmicro1/hmx/hmx-knowledge.git` by default)
+- [`pbakaus/impeccable`](https://github.com/pbakaus/impeccable)
+
 The goal is a safe copy-paste installer that guides users through the same stack without asking them to copy someone else's private `config.yaml` or `.env`.
 
 ## Quick install
@@ -36,6 +42,9 @@ bash install.sh
 | `hermes-lcm` | clones/updates `https://github.com/stephenschoettler/hermes-lcm` into the selected Hermes plugin directory | follows the upstream repo layout |
 | `mnemosyne-memory` | installs `mnemosyne-memory[all]` and `sqlite-vec` into the Hermes runtime venv | local-first defaults; no remote API keys written |
 | `hermes-progress-tail` | runs the upstream `install.sh` from the latest GitHub release | can be pinned with `--progress-tail-ref` |
+| `obra/superpowers` | optional `git clone --depth=1` into `skills/vendor/obra-superpowers` | enable with `--install-superpowers` |
+| HMX knowledge | optional clone into `skills/vendor/hmx-knowledge` | private repo; user must already have SSH/token access |
+| `pbakaus/impeccable` | optional `git clone --depth=1` into `skills/vendor/impeccable` | enable with `--install-impeccable` |
 
 ## Safety model
 
@@ -71,6 +80,8 @@ Named profiles are supported. For example, profile `work` maps to:
 <hermes-home>/profiles/work
 ```
 
+Multiple profiles are supported in one invocation by repeating `--profile` or passing comma-separated names. They run sequentially, not in parallel, to keep backups and command output readable.
+
 ## Common commands
 
 Run the wizard:
@@ -97,10 +108,18 @@ Target a custom Hermes home:
 bash install.sh --home /opt/hermes
 ```
 
-Target a named profile:
+Target one named profile:
 
 ```bash
 bash install.sh --profile work
+```
+
+Target multiple profiles in one run. The installer applies them sequentially, one profile-scoped plan at a time:
+
+```bash
+bash install.sh --profile default,work,client
+# equivalent:
+bash install.sh --profile default --profile work --profile client
 ```
 
 Override the LCM summary/expansion model:
@@ -121,6 +140,25 @@ Skip one component:
 bash install.sh --skip-lcm
 bash install.sh --skip-mnemosyne
 bash install.sh --skip-progress-tail
+```
+
+Install optional skill packs:
+
+```bash
+bash install.sh --install-superpowers
+bash install.sh --install-impeccable
+```
+
+Install the private HMX knowledge repo:
+
+```bash
+# Recommended: SSH access via ssh-agent
+bash install.sh --install-hmx-knowledge
+
+# Or override the repo URL if your org uses a different clone URL.
+# Prefer a git credential helper or GIT_ASKPASS for tokens; do not paste tokens into shell history.
+HMX_KNOWLEDGE_GIT_URL=https://gitlab.com/hashmicro1/hmx/hmx-knowledge.git \
+  bash install.sh --install-hmx-knowledge
 ```
 
 ## Config changes
@@ -149,7 +187,7 @@ memory:
   mnemosyne:
     auto_sleep: true
     profile_isolation: false
-    vector_type: float32
+    vector_type: int8
     skip_contexts: cron,flush,subagent,background,skill_loop
 
 platform_toolsets:
@@ -188,14 +226,26 @@ If your Hermes provider alias is different, pass `--summary-model`.
 ```env
 MNEMOSYNE_DATA_DIR=<hermes-profile>/mnemosyne/data
 MNEMOSYNE_FORCE_LOCAL=1
+MNEMOSYNE_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+MNEMOSYNE_EMBEDDING_DIM=384
+MNEMOSYNE_VEC_TYPE=int8
 MNEMOSYNE_LLM_ENABLED=true
+MNEMOSYNE_LLM_REPO=openbmb/MiniCPM5-1B-GGUF
+MNEMOSYNE_LLM_FILE=MiniCPM5-1B-Q4_K_M.gguf
 MNEMOSYNE_LLM_N_CTX=2048
-MNEMOSYNE_LLM_MAX_TOKENS=512
+MNEMOSYNE_LLM_MAX_TOKENS=2048
 MNEMOSYNE_LLM_N_THREADS=4
-MNEMOSYNE_VEC_TYPE=float32
+MNEMOSYNE_WM_MAX_ITEMS=10000
+MNEMOSYNE_WM_TTL_HOURS=48
+MNEMOSYNE_EP_LIMIT=50000
+MNEMOSYNE_SLEEP_BATCH=3000
+MNEMOSYNE_SP_MAX=1000
+MNEMOSYNE_RECENCY_HALFLIFE=168
 ```
 
-Remote embedding/LLM settings are intentionally omitted. Configure those yourself after installation if you do not want the local-first setup.
+These defaults follow Mnemosyne's local-first docs: local fastembed (`BAAI/bge-small-en-v1.5`), local MiniCPM5-1B GGUF consolidation, `MNEMOSYNE_FORCE_LOCAL=1`, and `int8` vectors for a practical storage/accuracy tradeoff.
+
+Remote embedding/LLM URL and API-key settings are intentionally omitted. Configure those yourself after installation if you do not want the local-first setup.
 
 ## After install
 

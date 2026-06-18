@@ -23,6 +23,7 @@ class ConfigMergeTests(unittest.TestCase):
         self.assertIs(merged["memory"]["memory_enabled"], False)
         self.assertIs(merged["memory"]["user_profile_enabled"], False)
         self.assertEqual(merged["memory"]["custom"], 42)
+        self.assertEqual(merged["memory"]["mnemosyne"]["vector_type"], "int8")
         self.assertEqual(merged["display"], {"streaming": True})
 
     def test_build_target_config_enables_memory_toolset_for_telegram(self):

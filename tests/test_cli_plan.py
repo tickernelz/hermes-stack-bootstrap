@@ -7,6 +7,8 @@ from hermes_stack_bootstrap.cli import (
     InstallerOptions,
     base_home_from_config_path,
     build_plan,
+    build_plans,
+    parse_profiles,
     wizard,
 )
 
@@ -43,6 +45,40 @@ class CliPlanTests(unittest.TestCase):
 
     def test_progress_tail_ref_defaults_to_latest_release(self):
         self.assertEqual(PROGRESS_TAIL_REF, "latest")
+
+    def test_parse_profiles_accepts_repeated_and_comma_separated_values(self):
+        self.assertEqual(
+            parse_profiles(["default,work", "client", "work"]),
+            ("default", "work", "client"),
+        )
+
+    def test_build_plans_targets_multiple_profiles(self):
+        options = InstallerOptions(
+            base_home=Path("/tmp/hermes"),
+            profile="default,work",
+            yes=True,
+            dry_run=True,
+            skip_lcm=True,
+            skip_mnemosyne=True,
+            skip_progress_tail=True,
+            install_superpowers=True,
+        )
+
+        plans = build_plans(options)
+
+        self.assertEqual([plan.options.profile for plan in plans], ["default", "work"])
+        self.assertEqual(plans[0].target_home, Path("/tmp/hermes"))
+        self.assertEqual(plans[1].target_home, Path("/tmp/hermes/profiles/work"))
+        default_commands = [step.command for step in plans[0].steps if step.command]
+        work_commands = [step.command for step in plans[1].steps if step.command]
+        self.assertIn(
+            "git clone --depth=1 https://github.com/obra/superpowers /tmp/hermes/skills/vendor/obra-superpowers",
+            default_commands,
+        )
+        self.assertIn(
+            "git clone --depth=1 https://github.com/obra/superpowers /tmp/hermes/profiles/work/skills/vendor/obra-superpowers",
+            work_commands,
+        )
 
     def test_build_plan_targets_default_home_and_uses_upstream_install_commands(self):
         options = InstallerOptions(
@@ -91,6 +127,37 @@ class CliPlanTests(unittest.TestCase):
         )
         self.assertIn(
             "curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-progress-tail/${LATEST_HERMES_PROGRESS_TAIL_TAG}/install.sh | env HPT_INTERACTIVE=0 HERMES_HOME=/tmp/hermes HPT_PROFILES=work bash",
+            commands,
+        )
+        self.assertIn(
+            "hermes -p work memory status && hermes -p work mnemosyne stats && hermes -p work plugins list --plain --no-bundled",
+            commands,
+        )
+
+    def test_build_plan_can_include_optional_skill_repositories(self):
+        options = InstallerOptions(
+            base_home=Path("/tmp/hermes"),
+            profile="default",
+            yes=True,
+            dry_run=True,
+            install_superpowers=True,
+            install_hmx_knowledge=True,
+            install_impeccable=True,
+        )
+
+        plan = build_plan(options)
+        commands = [step.command for step in plan.steps if step.command]
+
+        self.assertIn(
+            "git clone --depth=1 https://github.com/obra/superpowers /tmp/hermes/skills/vendor/obra-superpowers",
+            commands,
+        )
+        self.assertIn(
+            "git clone --depth=1 git@gitlab.com:hashmicro1/hmx/hmx-knowledge.git /tmp/hermes/skills/vendor/hmx-knowledge",
+            commands,
+        )
+        self.assertIn(
+            "git clone --depth=1 https://github.com/pbakaus/impeccable /tmp/hermes/skills/vendor/impeccable",
             commands,
         )
 

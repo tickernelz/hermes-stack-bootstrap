@@ -13,7 +13,7 @@ REQUIRED_PLUGINS = ("hermes-lcm", "mnemosyne")
 DEFAULT_MEMORY_MNEMOSYNE = {
     "auto_sleep": True,
     "profile_isolation": False,
-    "vector_type": "float32",
+    "vector_type": "int8",
     "skip_contexts": "cron,flush,subagent,background,skill_loop",
 }
 

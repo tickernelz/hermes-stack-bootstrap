@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import difflib
 import json
 import os
@@ -28,6 +29,12 @@ LCM_REPO = "https://github.com/stephenschoettler/hermes-lcm"
 PROGRESS_TAIL_REPO = "tickernelz/hermes-progress-tail"
 PROGRESS_TAIL_REF = os.environ.get("HERMES_STACK_PROGRESS_TAIL_REF", "latest")
 LATEST_PROGRESS_TAIL_TAG_PLACEHOLDER = "${LATEST_HERMES_PROGRESS_TAIL_TAG}"
+SUPERPOWERS_REPO = "https://github.com/obra/superpowers"
+HMX_KNOWLEDGE_REPO = os.environ.get(
+    "HMX_KNOWLEDGE_GIT_URL",
+    "git@gitlab.com:hashmicro1/hmx/hmx-knowledge.git",
+)
+IMPECCABLE_REPO = "https://github.com/pbakaus/impeccable"
 
 
 @dataclass(frozen=True)
@@ -41,6 +48,10 @@ class InstallerOptions:
     skip_mnemosyne: bool = False
     skip_progress_tail: bool = False
     progress_tail_ref: str = PROGRESS_TAIL_REF
+    install_superpowers: bool = False
+    install_hmx_knowledge: bool = False
+    install_impeccable: bool = False
+    hmx_knowledge_url: str = HMX_KNOWLEDGE_REPO
 
 
 @dataclass(frozen=True)
@@ -63,6 +74,26 @@ def target_home_for(base_home: Path, profile: str) -> Path:
     if profile == "default":
         return base_home
     return base_home / "profiles" / profile
+
+
+def parse_profiles(raw_profiles: Iterable[str] | str | None) -> tuple[str, ...]:
+    """Normalize CLI profile values from repeated/comma-separated flags."""
+    if raw_profiles is None:
+        return ("default",)
+    if isinstance(raw_profiles, str):
+        raw_items: Iterable[str] = (raw_profiles,)
+    else:
+        raw_items = raw_profiles
+
+    profiles: list[str] = []
+    seen: set[str] = set()
+    for raw_item in raw_items:
+        for part in str(raw_item).split(","):
+            profile = part.strip() or "default"
+            if profile not in seen:
+                profiles.append(profile)
+                seen.add(profile)
+    return tuple(profiles or ["default"])
 
 
 def hermes_python_for(base_home: Path) -> Path:
@@ -144,6 +175,18 @@ def progress_tail_plan_command(*, base_home: Path, profile: str, ref: str) -> st
     )
 
 
+def skill_vendor_dir(target_home: Path, name: str) -> Path:
+    return target_home / "skills" / "vendor" / name
+
+
+def skill_repo_clone_command(repo_url: str, dest: Path) -> str:
+    return f"git clone --depth=1 {repo_url} {dest}"
+
+
+def skill_repo_update_command(dest: Path) -> str:
+    return f"git -C {dest} pull --ff-only"
+
+
 def build_plan(options: InstallerOptions) -> InstallPlan:
     base_home = options.base_home.expanduser()
     target_home = target_home_for(base_home, options.profile)
@@ -189,6 +232,44 @@ def build_plan(options: InstallerOptions) -> InstallPlan:
             )
         )
 
+    if options.install_superpowers:
+        dest = skill_vendor_dir(target_home, "obra-superpowers")
+        steps.append(
+            PlanStep(
+                "Optional: install Obra Superpowers skills",
+                skill_repo_clone_command(SUPERPOWERS_REPO, dest),
+                "Installs the public Superpowers skill pack under skills/vendor/ so Hermes can discover its SKILL.md files.",
+            )
+        )
+
+    if options.install_hmx_knowledge:
+        dest = skill_vendor_dir(target_home, "hmx-knowledge")
+        steps.append(
+            PlanStep(
+                "Optional: install HMX knowledge skills",
+                skill_repo_clone_command(options.hmx_knowledge_url, dest),
+                "Private GitLab repo; use SSH agent or preconfigured HTTPS/token credentials. The installer never stores tokens.",
+            )
+        )
+
+    if options.install_impeccable:
+        dest = skill_vendor_dir(target_home, "impeccable")
+        steps.append(
+            PlanStep(
+                "Optional: install Impeccable design skill",
+                skill_repo_clone_command(IMPECCABLE_REPO, dest),
+                "Installs the public Impeccable skill repo under skills/vendor/.",
+            )
+        )
+
+    verify_command = "hermes memory status && hermes mnemosyne stats && hermes plugins list --plain --no-bundled"
+    if options.profile != "default":
+        verify_command = (
+            f"hermes -p {options.profile} memory status && "
+            f"hermes -p {options.profile} mnemosyne stats && "
+            f"hermes -p {options.profile} plugins list --plain --no-bundled"
+        )
+
     steps.extend(
         [
             PlanStep(
@@ -201,7 +282,7 @@ def build_plan(options: InstallerOptions) -> InstallPlan:
             ),
             PlanStep(
                 "Verify",
-                "hermes memory status && hermes mnemosyne stats && hermes plugins list --plain --no-bundled",
+                verify_command,
                 "Restart Hermes manually after applying changes, then run these checks.",
             ),
         ]
@@ -213,6 +294,14 @@ def build_plan(options: InstallerOptions) -> InstallPlan:
         config_path=target_home / "config.yaml",
         env_path=target_home / ".env",
         steps=tuple(steps),
+    )
+
+
+def build_plans(options: InstallerOptions) -> tuple[InstallPlan, ...]:
+    """Build one profile-scoped plan per requested profile."""
+    return tuple(
+        build_plan(dataclasses.replace(options, profile=profile))
+        for profile in parse_profiles(options.profile)
     )
 
 
@@ -293,6 +382,35 @@ def install_progress_tail(plan: InstallPlan) -> None:
     run_command(command, dry_run=plan.options.dry_run)
 
 
+def install_skill_repo(repo_url: str, dest: Path, *, dry_run: bool) -> None:
+    if dest.exists():
+        run_command(skill_repo_update_command(dest), dry_run=dry_run)
+    else:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        run_command(skill_repo_clone_command(repo_url, dest), dry_run=dry_run)
+
+
+def install_optional_skills(plan: InstallPlan) -> None:
+    if plan.options.install_superpowers:
+        install_skill_repo(
+            SUPERPOWERS_REPO,
+            skill_vendor_dir(plan.target_home, "obra-superpowers"),
+            dry_run=plan.options.dry_run,
+        )
+    if plan.options.install_hmx_knowledge:
+        install_skill_repo(
+            plan.options.hmx_knowledge_url,
+            skill_vendor_dir(plan.target_home, "hmx-knowledge"),
+            dry_run=plan.options.dry_run,
+        )
+    if plan.options.install_impeccable:
+        install_skill_repo(
+            IMPECCABLE_REPO,
+            skill_vendor_dir(plan.target_home, "impeccable"),
+            dry_run=plan.options.dry_run,
+        )
+
+
 def merge_config_and_env(plan: InstallPlan) -> None:
     env_values = build_env_values(
         home=str(plan.target_home),
@@ -356,9 +474,21 @@ def apply_plan(plan: InstallPlan) -> None:
     install_lcm(plan)
     install_mnemosyne(plan)
     install_progress_tail(plan)
+    install_optional_skills(plan)
     merge_config_and_env(plan)
     run_verification(plan)
     print("\nDone. Restart Hermes manually after applying changes: /restart")
+
+
+def apply_plans(plans: tuple[InstallPlan, ...]) -> None:
+    if len(plans) == 1:
+        apply_plan(plans[0])
+        return
+
+    print(f"Applying {len(plans)} profile plans sequentially: {', '.join(plan.options.profile for plan in plans)}")
+    for index, plan in enumerate(plans, start=1):
+        print(f"\n### Profile {index}/{len(plans)}: {plan.options.profile}")
+        apply_plan(plan)
 
 
 def prompt_default(prompt: str, default: str) -> str:
@@ -369,7 +499,12 @@ def prompt_default(prompt: str, default: str) -> str:
 def wizard(argv: Iterable[str] | None = None) -> InstallerOptions:
     parser = argparse.ArgumentParser(description="Bootstrap Hermes LCM + Mnemosyne + progress-tail")
     parser.add_argument("--home", default=None)
-    parser.add_argument("--profile", default="")
+    parser.add_argument(
+        "--profile",
+        action="append",
+        default=None,
+        help="Target profile. Repeat or comma-separate for multiple profiles, e.g. --profile default,work --profile client.",
+    )
     parser.add_argument(
         "--summary-model",
         default=os.environ.get("HERMES_STACK_SUMMARY_MODEL", DEFAULT_LCM_SUMMARY_MODEL),
@@ -384,22 +519,29 @@ def wizard(argv: Iterable[str] | None = None) -> InstallerOptions:
         default=os.environ.get("HERMES_STACK_PROGRESS_TAIL_REF", PROGRESS_TAIL_REF),
         help="hermes-progress-tail git ref or 'latest' to resolve the newest GitHub release",
     )
+    parser.add_argument("--install-superpowers", action="store_true")
+    parser.add_argument("--install-hmx-knowledge", action="store_true")
+    parser.add_argument("--install-impeccable", action="store_true")
+    parser.add_argument(
+        "--hmx-knowledge-url",
+        default=os.environ.get("HMX_KNOWLEDGE_GIT_URL", HMX_KNOWLEDGE_REPO),
+        help="Private HMX knowledge repo URL. Prefer SSH or a git credential helper; do not put tokens in shell history.",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
 
     home = Path(args.home).expanduser() if args.home else detect_base_home()
-    profile = args.profile
+    profiles = parse_profiles(args.profile)
     if not args.yes:
         print("Hermes Stack Bootstrap")
         print("Installs only: hermes-lcm, Mnemosyne full-local, hermes-progress-tail.")
         home = Path(prompt_default("Hermes base path", str(home))).expanduser()
-        if not profile:
-            profile = prompt_default("Target profile", "default")
+        if args.profile is None:
+            profiles = parse_profiles(prompt_default("Target profile(s), comma-separated", "default"))
         if not args.summary_model:
             args.summary_model = prompt_default(
                 "LCM summary model override (empty = Hermes auxiliary)", ""
             )
-    if not profile:
-        profile = "default"
+    profile = ",".join(profiles)
 
     return InstallerOptions(
         base_home=home,
@@ -411,14 +553,18 @@ def wizard(argv: Iterable[str] | None = None) -> InstallerOptions:
         skip_mnemosyne=args.skip_mnemosyne,
         skip_progress_tail=args.skip_progress_tail,
         progress_tail_ref=args.progress_tail_ref,
+        install_superpowers=args.install_superpowers,
+        install_hmx_knowledge=args.install_hmx_knowledge,
+        install_impeccable=args.install_impeccable,
+        hmx_knowledge_url=args.hmx_knowledge_url,
     )
 
 
 def main(argv: Iterable[str] | None = None) -> int:
     options = wizard(argv)
-    plan = build_plan(options)
+    plans = build_plans(options)
     try:
-        apply_plan(plan)
+        apply_plans(plans)
     except subprocess.CalledProcessError as exc:
         print(f"Command failed with exit code {exc.returncode}: {exc.cmd}", file=sys.stderr)
         return exc.returncode or 1
