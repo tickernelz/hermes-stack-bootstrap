@@ -33,18 +33,50 @@ class ConfigMergeTests(unittest.TestCase):
 
         self.assertEqual(merged["platform_toolsets"]["telegram"], ["file", "terminal", "memory"])
 
-    def test_build_target_config_creates_telegram_memory_toolset_when_missing(self):
+    def test_build_target_config_copies_cli_toolsets_when_telegram_missing(self):
+        existing = {"platform_toolsets": {"cli": ["web", "file", "terminal"]}}
+
+        merged = build_target_config(existing)
+
+        self.assertEqual(
+            merged["platform_toolsets"]["telegram"],
+            ["web", "file", "terminal", "memory"],
+        )
+        self.assertEqual(merged["platform_toolsets"]["cli"], ["web", "file", "terminal"])
+
+    def test_build_target_config_uses_top_level_toolsets_when_platform_cli_missing(self):
+        existing = {"toolsets": ["web", "browser", "terminal"]}
+
+        merged = build_target_config(existing)
+
+        self.assertEqual(
+            merged["platform_toolsets"]["telegram"],
+            ["web", "browser", "terminal", "memory"],
+        )
+
+    def test_build_target_config_falls_back_to_full_cli_toolset_when_no_cli_toolsets_exist(self):
         merged = build_target_config({})
 
-        self.assertEqual(merged["platform_toolsets"]["telegram"], ["memory"])
+        self.assertEqual(merged["platform_toolsets"]["telegram"], ["hermes-cli", "memory"])
 
-    def test_build_target_config_keeps_telegram_memory_toolset_idempotent(self):
-        existing = {"platform_toolsets": {"telegram": ["memory"]}}
+    def test_build_target_config_repairs_legacy_memory_only_telegram_toolset(self):
+        existing = {
+            "toolsets": ["web", "terminal"],
+            "platform_toolsets": {"telegram": ["memory"]},
+        }
 
         first = build_target_config(existing)
         second = build_target_config(first)
 
-        self.assertEqual(second["platform_toolsets"]["telegram"], ["memory"])
+        self.assertEqual(second["platform_toolsets"]["telegram"], ["web", "terminal", "memory"])
+
+    def test_build_target_config_keeps_existing_rich_telegram_toolset_idempotent(self):
+        existing = {"platform_toolsets": {"telegram": ["file", "memory"]}}
+
+        first = build_target_config(existing)
+        second = build_target_config(first)
+
+        self.assertEqual(second["platform_toolsets"]["telegram"], ["file", "memory"])
 
     def test_build_target_config_is_idempotent(self):
         existing = {

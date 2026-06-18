@@ -58,7 +58,7 @@ It only merges a small, reviewable set of config/env values:
 - enables the required plugins
 - switches context engine to LCM
 - configures Mnemosyne as the memory provider
-- exposes the `memory` toolset on Telegram so Mnemosyne tools are available there
+- seeds Telegram toolsets from the CLI/top-level toolset selection, then appends `memory`, so Telegram keeps normal tool access while Mnemosyne tools are available there
 - writes LCM/Mnemosyne defaults for the selected mode
 - writes Mnemosyne embedding API credentials only when the user supplies them during the install run
 - optionally writes `SOUL.md` only when `--generate-soul` is enabled or the interactive wizard asks and the user agrees
@@ -317,12 +317,13 @@ memory:
 
 platform_toolsets:
   telegram:
+    - hermes-cli   # or the existing CLI/top-level toolset selection
     - memory
 ```
 
 Unrelated config keys are preserved.
 
-`platform_toolsets.telegram: [memory]` is included because Telegram sessions otherwise may not expose Mnemosyne's tools.
+If `platform_toolsets.telegram` already exists, the installer preserves it and only appends `memory` if missing. If Telegram has no explicit toolset list, the installer copies `platform_toolsets.cli`; if that is missing, it copies top-level `toolsets`; if neither exists, it seeds Telegram with `hermes-cli` plus `memory`. A legacy `[memory]`-only Telegram list from older bootstrapper runs is treated as broken and repaired the same way. This avoids the bad override that would make Telegram sessions lose normal tools like terminal, file, browser, and web.
 
 If the discovered runtime Python is globally installed but not writable by the current user, ask the server admin to preinstall Mnemosyne into that runtime, run the installer with appropriate privileges, or use `--skip-mnemosyne` if Mnemosyne is already installed. The installer will not silently install Mnemosyne into an unrelated user Python because Hermes would not see it.
 

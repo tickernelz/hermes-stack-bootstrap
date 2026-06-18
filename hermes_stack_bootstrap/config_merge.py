@@ -46,6 +46,32 @@ def _append_unique(items: list[Any], new_items: tuple[str, ...]) -> list[Any]:
     return result
 
 
+def _telegram_seed_toolsets(cfg: dict[str, Any], platform_toolsets: dict[str, Any]) -> list[Any]:
+    seed = _ensure_list(platform_toolsets.get("cli"))
+    if not seed:
+        seed = _ensure_list(cfg.get("toolsets"))
+    if not seed:
+        seed = ["hermes-cli"]
+    return seed
+
+
+def _telegram_toolsets_for(cfg: dict[str, Any], platform_toolsets: dict[str, Any]) -> list[Any]:
+    """Return Telegram toolsets without narrowing a first-time Telegram config.
+
+    Adding only ``memory`` creates an explicit Telegram override and disables the
+    broad default ``hermes-telegram`` tool universe. When Telegram has no saved
+    selection yet, seed it from the CLI selection first, then top-level
+    ``toolsets``, and finally the full ``hermes-cli`` composite.
+    """
+    if "telegram" in platform_toolsets:
+        existing = _ensure_list(platform_toolsets.get("telegram"))
+        if existing == ["memory"]:
+            return _append_unique(_telegram_seed_toolsets(cfg, platform_toolsets), ("memory",))
+        return _append_unique(existing, ("memory",))
+
+    return _append_unique(_telegram_seed_toolsets(cfg, platform_toolsets), ("memory",))
+
+
 def build_target_config(existing: dict[str, Any] | None) -> dict[str, Any]:
     """Return config with LCM + Mnemosyne activated, preserving unrelated keys.
 
@@ -81,9 +107,7 @@ def build_target_config(existing: dict[str, Any] | None) -> dict[str, Any]:
     cfg["memory"] = memory
 
     platform_toolsets = _ensure_mapping(cfg.get("platform_toolsets"))
-    platform_toolsets["telegram"] = _append_unique(
-        _ensure_list(platform_toolsets.get("telegram")), ("memory",)
-    )
+    platform_toolsets["telegram"] = _telegram_toolsets_for(cfg, platform_toolsets)
     cfg["platform_toolsets"] = platform_toolsets
 
     return cfg
