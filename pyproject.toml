@@ -1,0 +1,9 @@
+[project]
+name = "hermes-stack-bootstrap"
+version = "0.1.0"
+description = "Bootstrap Hermes LCM, Mnemosyne, and progress-tail with a small safe wizard."
+requires-python = ">=3.11"
+dependencies = ["PyYAML>=6"]
+
+[project.scripts]
+hermes-stack-bootstrap = "hermes_stack_bootstrap.cli:main"
