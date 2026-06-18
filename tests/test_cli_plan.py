@@ -36,7 +36,7 @@ class CliPlanTests(unittest.TestCase):
     def test_wizard_allows_manual_base_home_override(self):
         with (
             patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch("builtins.input", side_effect=["/opt/hermes", "work"]),
+            patch("builtins.input", side_effect=["/opt/hermes", "work", "", "", ""]),
         ):
             options = wizard([])
 
@@ -86,7 +86,8 @@ class CliPlanTests(unittest.TestCase):
             profile="default",
             yes=True,
             dry_run=True,
-            summary_model="lokal_sub2api/gpt-5.4-mini",
+            lcm_summary_model="lokal_sub2api/gpt-5.4-mini",
+            lcm_expansion_model="lokal_sub2api/gpt-5.4-mini",
         )
 
         plan = build_plan(options)
@@ -108,6 +109,58 @@ class CliPlanTests(unittest.TestCase):
             "curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-progress-tail/${LATEST_HERMES_PROGRESS_TAIL_TAG}/install.sh | env HPT_INTERACTIVE=0 HERMES_HOME=/tmp/hermes bash",
             commands,
         )
+
+    def test_build_plan_uses_mode_specific_mnemosyne_install_commands(self):
+        hybrid = InstallerOptions(
+            base_home=Path("/tmp/hermes"),
+            profile="default",
+            yes=True,
+            dry_run=True,
+            mnemosyne_mode="hybrid",
+        )
+        online = InstallerOptions(
+            base_home=Path("/tmp/hermes"),
+            profile="default",
+            yes=True,
+            dry_run=True,
+            mnemosyne_mode="full-online",
+        )
+
+        hybrid_commands = [step.command for step in build_plan(hybrid).steps if step.command]
+        online_commands = [step.command for step in build_plan(online).steps if step.command]
+
+        self.assertIn(
+            "/tmp/hermes/hermes-agent/venv/bin/python -m pip install --upgrade --no-cache-dir 'mnemosyne-memory[embeddings]' sqlite-vec",
+            hybrid_commands,
+        )
+        self.assertIn(
+            "/tmp/hermes/hermes-agent/venv/bin/python -m pip install --upgrade --no-cache-dir mnemosyne-memory sqlite-vec numpy",
+            online_commands,
+        )
+
+    def test_wizard_accepts_mnemosyne_and_lcm_model_options(self):
+        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
+            options = wizard(
+                [
+                    "--yes",
+                    "--mnemosyne-mode",
+                    "hybrid",
+                    "--mnemosyne-llm-provider",
+                    "openrouter",
+                    "--mnemosyne-llm-model",
+                    "anthropic/claude-sonnet-4",
+                    "--lcm-summary-model",
+                    "openrouter/google/gemini-2.5-flash",
+                    "--lcm-expansion-model",
+                    "openrouter/anthropic/claude-sonnet-4",
+                ]
+            )
+
+        self.assertEqual(options.mnemosyne_mode, "hybrid")
+        self.assertEqual(options.mnemosyne_host_llm_provider, "openrouter")
+        self.assertEqual(options.mnemosyne_host_llm_model, "anthropic/claude-sonnet-4")
+        self.assertEqual(options.lcm_summary_model, "openrouter/google/gemini-2.5-flash")
+        self.assertEqual(options.lcm_expansion_model, "openrouter/anthropic/claude-sonnet-4")
 
     def test_build_plan_targets_named_profile_for_progress_tail(self):
         options = InstallerOptions(

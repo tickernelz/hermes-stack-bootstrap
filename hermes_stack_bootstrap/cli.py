@@ -19,7 +19,9 @@ from typing import Iterable
 from .config_merge import build_target_config, read_config, write_config
 from .env_template import (
     DEFAULT_LCM_SUMMARY_MODEL,
+    MNEMOSYNE_MODES,
     build_env_values,
+    managed_env_keys,
     merge_env_text,
     render_env_block,
 )
@@ -44,6 +46,11 @@ class InstallerOptions:
     yes: bool = False
     dry_run: bool = False
     summary_model: str = ""
+    lcm_summary_model: str = DEFAULT_LCM_SUMMARY_MODEL
+    lcm_expansion_model: str = ""
+    mnemosyne_mode: str = "full-local"
+    mnemosyne_host_llm_provider: str = ""
+    mnemosyne_host_llm_model: str = ""
     skip_lcm: bool = False
     skip_mnemosyne: bool = False
     skip_progress_tail: bool = False
@@ -187,6 +194,17 @@ def skill_repo_update_command(dest: Path) -> str:
     return f"git -C {dest} pull --ff-only"
 
 
+def mnemosyne_pip_packages(mode: str) -> str:
+    normalized = mode.strip().lower() or "full-local"
+    if normalized == "full-local":
+        return "'mnemosyne-memory[all]' sqlite-vec"
+    if normalized == "hybrid":
+        return "'mnemosyne-memory[embeddings]' sqlite-vec"
+    if normalized == "full-online":
+        return "mnemosyne-memory sqlite-vec numpy"
+    raise ValueError(f"Unknown Mnemosyne mode: {mode}")
+
+
 def build_plan(options: InstallerOptions) -> InstallPlan:
     base_home = options.base_home.expanduser()
     target_home = target_home_for(base_home, options.profile)
@@ -207,9 +225,9 @@ def build_plan(options: InstallerOptions) -> InstallPlan:
         steps.extend(
             [
                 PlanStep(
-                    "Install Mnemosyne full local package into Hermes runtime venv",
-                    f"{hermes_py} -m pip install --upgrade --no-cache-dir 'mnemosyne-memory[all]' sqlite-vec",
-                    "This follows Mnemosyne's full-feature local profile: local embeddings plus local GGUF LLM fallback.",
+                    f"Install Mnemosyne package for {options.mnemosyne_mode} mode into Hermes runtime venv",
+                    f"{hermes_py} -m pip install --upgrade --no-cache-dir {mnemosyne_pip_packages(options.mnemosyne_mode)}",
+                    "full-local uses local embeddings + local GGUF LLM; hybrid uses local embeddings + Hermes host LLM; full-online leaves embedding endpoint/model to the user and routes LLM via Hermes.",
                 ),
                 PlanStep(
                     "Register Mnemosyne as Hermes memory provider",
@@ -278,7 +296,7 @@ def build_plan(options: InstallerOptions) -> InstallPlan:
             ),
             PlanStep(
                 "Merge .env non-secret defaults",
-                notes="Write LCM tuning and local-first Mnemosyne defaults. No API keys are added.",
+                notes="Write LCM tuning and selected Mnemosyne mode defaults. No API keys are added.",
             ),
             PlanStep(
                 "Verify",
@@ -313,6 +331,15 @@ def print_plan(plan: InstallPlan) -> None:
     print(f"Config path    : {plan.config_path}")
     print(f"Env path       : {plan.env_path}")
     print(f"Dry run        : {plan.options.dry_run}")
+    print(f"Mnemosyne mode : {plan.options.mnemosyne_mode}")
+    if plan.options.lcm_summary_model:
+        print(f"LCM summary    : {plan.options.lcm_summary_model}")
+    else:
+        print("LCM summary    : Hermes auxiliary.compression")
+    if plan.options.lcm_expansion_model:
+        print(f"LCM expansion  : {plan.options.lcm_expansion_model}")
+    else:
+        print("LCM expansion  : summary model / Hermes auxiliary")
     for index, step in enumerate(plan.steps, start=1):
         print(f"\n{index}. {step.title}")
         if step.command:
@@ -357,7 +384,7 @@ def install_mnemosyne(plan: InstallPlan) -> None:
         return
     hermes_py = hermes_python_for(plan.options.base_home.expanduser())
     run_command(
-        f"{hermes_py} -m pip install --upgrade --no-cache-dir 'mnemosyne-memory[all]' sqlite-vec",
+        f"{hermes_py} -m pip install --upgrade --no-cache-dir {mnemosyne_pip_packages(plan.options.mnemosyne_mode)}",
         dry_run=plan.options.dry_run,
     )
     run_command(
@@ -415,6 +442,11 @@ def merge_config_and_env(plan: InstallPlan) -> None:
     env_values = build_env_values(
         home=str(plan.target_home),
         summary_model=plan.options.summary_model,
+        lcm_summary_model=plan.options.lcm_summary_model,
+        lcm_expansion_model=plan.options.lcm_expansion_model,
+        mnemosyne_mode=plan.options.mnemosyne_mode,
+        mnemosyne_host_llm_provider=plan.options.mnemosyne_host_llm_provider,
+        mnemosyne_host_llm_model=plan.options.mnemosyne_host_llm_model,
     )
 
     if plan.options.dry_run:
@@ -442,7 +474,7 @@ def merge_config_and_env(plan: InstallPlan) -> None:
     write_config(plan.config_path, build_target_config(current_config))
 
     existing_env = plan.env_path.read_text() if plan.env_path.exists() else ""
-    plan.env_path.write_text(merge_env_text(existing_env, env_values))
+    plan.env_path.write_text(merge_env_text(existing_env, env_values, managed_keys=managed_env_keys()))
 
 
 def run_verification(plan: InstallPlan) -> None:
@@ -507,7 +539,34 @@ def wizard(argv: Iterable[str] | None = None) -> InstallerOptions:
     )
     parser.add_argument(
         "--summary-model",
-        default=os.environ.get("HERMES_STACK_SUMMARY_MODEL", DEFAULT_LCM_SUMMARY_MODEL),
+        default="",
+        help="Deprecated alias: sets both --lcm-summary-model and --lcm-expansion-model.",
+    )
+    parser.add_argument(
+        "--lcm-summary-model",
+        default=os.environ.get("HERMES_STACK_LCM_SUMMARY_MODEL", DEFAULT_LCM_SUMMARY_MODEL),
+        help="LCM summarization model using a Hermes provider/model name. Empty uses Hermes auxiliary.compression.",
+    )
+    parser.add_argument(
+        "--lcm-expansion-model",
+        default=os.environ.get("HERMES_STACK_LCM_EXPANSION_MODEL", ""),
+        help="LCM lcm_expand_query synthesis model. Empty falls back to summary model or Hermes auxiliary.",
+    )
+    parser.add_argument(
+        "--mnemosyne-mode",
+        choices=MNEMOSYNE_MODES,
+        default=os.environ.get("HERMES_STACK_MNEMOSYNE_MODE", "full-local"),
+        help="full-local=local embeddings+local GGUF LLM; hybrid=local embeddings+Hermes LLM; full-online=Hermes LLM+user-managed embedding endpoint/model.",
+    )
+    parser.add_argument(
+        "--mnemosyne-llm-provider",
+        default=os.environ.get("HERMES_STACK_MNEMOSYNE_LLM_PROVIDER", ""),
+        help="Optional Hermes provider override for Mnemosyne host LLM in hybrid/full-online modes.",
+    )
+    parser.add_argument(
+        "--mnemosyne-llm-model",
+        default=os.environ.get("HERMES_STACK_MNEMOSYNE_LLM_MODEL", ""),
+        help="Optional Hermes model override for Mnemosyne host LLM in hybrid/full-online modes.",
     )
     parser.add_argument("--yes", "-y", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -533,14 +592,37 @@ def wizard(argv: Iterable[str] | None = None) -> InstallerOptions:
     profiles = parse_profiles(args.profile)
     if not args.yes:
         print("Hermes Stack Bootstrap")
-        print("Installs only: hermes-lcm, Mnemosyne full-local, hermes-progress-tail.")
+        print("Installs: hermes-lcm, Mnemosyne, hermes-progress-tail; optional skill packs are flag-gated.")
         home = Path(prompt_default("Hermes base path", str(home))).expanduser()
         if args.profile is None:
             profiles = parse_profiles(prompt_default("Target profile(s), comma-separated", "default"))
-        if not args.summary_model:
-            args.summary_model = prompt_default(
-                "LCM summary model override (empty = Hermes auxiliary)", ""
+        args.mnemosyne_mode = prompt_default(
+            "Mnemosyne mode (full-local, hybrid, full-online)", args.mnemosyne_mode
+        ).strip().lower()
+        if args.mnemosyne_mode not in MNEMOSYNE_MODES:
+            raise ValueError(f"Unknown Mnemosyne mode: {args.mnemosyne_mode}")
+        if args.mnemosyne_mode in {"hybrid", "full-online"}:
+            args.mnemosyne_llm_provider = prompt_default(
+                "Mnemosyne Hermes LLM provider override (empty = Hermes auxiliary/default)",
+                args.mnemosyne_llm_provider,
             )
+            args.mnemosyne_llm_model = prompt_default(
+                "Mnemosyne Hermes LLM model override (empty = Hermes auxiliary/default)",
+                args.mnemosyne_llm_model,
+            )
+        if not args.summary_model:
+            args.lcm_summary_model = prompt_default(
+                "LCM summary model (empty = Hermes auxiliary.compression)",
+                args.lcm_summary_model,
+            )
+            args.lcm_expansion_model = prompt_default(
+                "LCM expansion model (empty = summary model / Hermes auxiliary)",
+                args.lcm_expansion_model,
+            )
+    if args.summary_model:
+        args.lcm_summary_model = args.summary_model
+        if not args.lcm_expansion_model:
+            args.lcm_expansion_model = args.summary_model
     profile = ",".join(profiles)
 
     return InstallerOptions(
@@ -549,6 +631,11 @@ def wizard(argv: Iterable[str] | None = None) -> InstallerOptions:
         yes=args.yes,
         dry_run=args.dry_run,
         summary_model=args.summary_model,
+        lcm_summary_model=args.lcm_summary_model,
+        lcm_expansion_model=args.lcm_expansion_model,
+        mnemosyne_mode=args.mnemosyne_mode,
+        mnemosyne_host_llm_provider=args.mnemosyne_llm_provider,
+        mnemosyne_host_llm_model=args.mnemosyne_llm_model,
         skip_lcm=args.skip_lcm,
         skip_mnemosyne=args.skip_mnemosyne,
         skip_progress_tail=args.skip_progress_tail,

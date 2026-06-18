@@ -1,9 +1,9 @@
 # Hermes Stack Bootstrap
 
-Opinionated bootstrapper for a small local-first [Hermes Agent](https://hermes-agent.nousresearch.com/) stack:
+Opinionated bootstrapper for a small [Hermes Agent](https://hermes-agent.nousresearch.com/) stack:
 
 - [`hermes-lcm`](https://github.com/stephenschoettler/hermes-lcm) for long-context conversation memory/compression
-- [`mnemosyne-memory`](https://github.com/AxDSan/mnemosyne) as the Hermes memory provider, configured for local-first use
+- [`mnemosyne-memory`](https://github.com/AxDSan/mnemosyne) as the Hermes memory provider, selectable as full-local, hybrid, or full-online
 - [`hermes-progress-tail`](https://github.com/tickernelz/hermes-progress-tail) for live progress/status bubbles
 
 Optional skill packs can also be installed:
@@ -40,7 +40,7 @@ bash install.sh
 | Component | Install method | Notes |
 |---|---|---|
 | `hermes-lcm` | clones/updates `https://github.com/stephenschoettler/hermes-lcm` into the selected Hermes plugin directory | follows the upstream repo layout |
-| `mnemosyne-memory` | installs `mnemosyne-memory[all]` and `sqlite-vec` into the Hermes runtime venv | local-first defaults; no remote API keys written |
+| `mnemosyne-memory` | installs mode-specific Mnemosyne package set into the Hermes runtime venv | default `full-local`; `hybrid` and `full-online` are available |
 | `hermes-progress-tail` | runs the upstream `install.sh` from the latest GitHub release | can be pinned with `--progress-tail-ref` |
 | `obra/superpowers` | optional `git clone --depth=1` into `skills/vendor/obra-superpowers` | enable with `--install-superpowers` |
 | HMX knowledge | optional clone into `skills/vendor/hmx-knowledge` | private repo; user must already have SSH/token access |
@@ -56,9 +56,9 @@ It only merges a small, reviewable set of config/env values:
 - switches context engine to LCM
 - configures Mnemosyne as the memory provider
 - exposes the `memory` toolset on Telegram so Mnemosyne tools are available there
-- writes non-secret LCM and local Mnemosyne defaults
+- writes non-secret LCM and Mnemosyne defaults for the selected mode
 
-It does **not** write tokens, passwords, private keys, provider API keys, Telegram bot tokens, dashboard secrets, or private endpoint credentials.
+It does **not** write tokens, passwords, private keys, provider API keys, Telegram bot tokens, dashboard secrets, private endpoint credentials, or Mnemosyne embedding API credentials.
 
 Existing files are backed up before non-dry-run writes.
 
@@ -122,10 +122,31 @@ bash install.sh --profile default,work,client
 bash install.sh --profile default --profile work --profile client
 ```
 
-Override the LCM summary/expansion model:
+Set LCM summary and expansion models explicitly from Hermes' available providers/models:
 
 ```bash
-bash install.sh --summary-model openrouter/google/gemini-2.5-flash
+bash install.sh \
+  --lcm-summary-model openrouter/google/gemini-2.5-flash \
+  --lcm-expansion-model openrouter/anthropic/claude-sonnet-4
+```
+
+Leave them empty to let Hermes resolve `auxiliary.compression`. The old `--summary-model` flag is still accepted as a backward-compatible alias that sets both LCM models.
+
+Choose a Mnemosyne mode:
+
+```bash
+# Default: local embeddings + local GGUF LLM consolidation
+bash install.sh --mnemosyne-mode full-local
+
+# Hybrid: local embeddings + Hermes provider/model for Mnemosyne LLM consolidation
+bash install.sh --mnemosyne-mode hybrid \
+  --mnemosyne-llm-provider openrouter \
+  --mnemosyne-llm-model anthropic/claude-sonnet-4
+
+# Full online: Hermes provider/model for Mnemosyne LLM; embedding endpoint/model is yours to configure
+bash install.sh --mnemosyne-mode full-online \
+  --mnemosyne-llm-provider openrouter \
+  --mnemosyne-llm-model anthropic/claude-sonnet-4
 ```
 
 Pin a specific progress-tail release instead of the latest release:
@@ -213,15 +234,23 @@ LCM_LARGE_OUTPUT_EXTERNALIZATION_ENABLED=true
 LCM_LARGE_OUTPUT_EXTERNALIZATION_THRESHOLD_CHARS=12000
 LCM_LARGE_OUTPUT_TRANSCRIPT_GC_ENABLED=true
 LCM_EXPANSION_CONTEXT_TOKENS=128000
-LCM_SUMMARY_MODEL=lokal_sub2api/gpt-5.4-mini
-LCM_EXPANSION_MODEL=lokal_sub2api/gpt-5.4-mini
 LCM_SUMMARY_TIMEOUT_MS=180000
 LCM_EXPANSION_TIMEOUT_MS=240000
 ```
 
-If your Hermes provider alias is different, pass `--summary-model`.
+By default, the installer does **not** write `LCM_SUMMARY_MODEL` or `LCM_EXPANSION_MODEL`; LCM will use Hermes' `auxiliary.compression` resolution. Set them with `--lcm-summary-model` and `--lcm-expansion-model` if you want explicit provider/model names.
 
 ### Mnemosyne
+
+The wizard exposes three modes:
+
+| Mode | Embeddings | LLM consolidation | Package install |
+|---|---|---|---|
+| `full-local` | local fastembed | local MiniCPM5 GGUF | `mnemosyne-memory[all] sqlite-vec` |
+| `hybrid` | local fastembed | Hermes host LLM provider/model | `mnemosyne-memory[embeddings] sqlite-vec` |
+| `full-online` | user-managed API/model | Hermes host LLM provider/model | `mnemosyne-memory sqlite-vec numpy` |
+
+#### `full-local` env
 
 ```env
 MNEMOSYNE_DATA_DIR=<hermes-profile>/mnemosyne/data
@@ -243,9 +272,46 @@ MNEMOSYNE_SP_MAX=1000
 MNEMOSYNE_RECENCY_HALFLIFE=168
 ```
 
-These defaults follow Mnemosyne's local-first docs: local fastembed (`BAAI/bge-small-en-v1.5`), local MiniCPM5-1B GGUF consolidation, `MNEMOSYNE_FORCE_LOCAL=1`, and `int8` vectors for a practical storage/accuracy tradeoff.
+#### `hybrid` env
 
-Remote embedding/LLM URL and API-key settings are intentionally omitted. Configure those yourself after installation if you do not want the local-first setup.
+```env
+MNEMOSYNE_DATA_DIR=<hermes-profile>/mnemosyne/data
+MNEMOSYNE_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+MNEMOSYNE_EMBEDDING_DIM=384
+MNEMOSYNE_VEC_TYPE=int8
+MNEMOSYNE_LLM_ENABLED=true
+MNEMOSYNE_LLM_MAX_TOKENS=2048
+MNEMOSYNE_HOST_LLM_ENABLED=true
+MNEMOSYNE_HOST_LLM_N_CTX=32000
+# Optional when supplied:
+MNEMOSYNE_HOST_LLM_PROVIDER=<hermes-provider>
+MNEMOSYNE_HOST_LLM_MODEL=<hermes-model>
+```
+
+#### `full-online` env
+
+```env
+MNEMOSYNE_DATA_DIR=<hermes-profile>/mnemosyne/data
+MNEMOSYNE_LLM_ENABLED=true
+MNEMOSYNE_LLM_MAX_TOKENS=2048
+MNEMOSYNE_HOST_LLM_ENABLED=true
+MNEMOSYNE_HOST_LLM_N_CTX=32000
+# Optional when supplied:
+MNEMOSYNE_HOST_LLM_PROVIDER=<hermes-provider>
+MNEMOSYNE_HOST_LLM_MODEL=<hermes-model>
+```
+
+For `full-online`, configure your own Mnemosyne embedding endpoint/model after install, for example:
+
+```env
+MNEMOSYNE_EMBEDDING_API_URL=https://your-embedding-endpoint/v1
+MNEMOSYNE_EMBEDDING_API_KEY=...
+MNEMOSYNE_EMBEDDING_MODEL=text-embedding-3-small
+MNEMOSYNE_EMBEDDING_DIM=1536
+MNEMOSYNE_EMBEDDINGS_VIA_API=true
+```
+
+The installer intentionally does not write embedding API URLs or keys. When switching modes, it removes stale bootstrapper-managed keys such as `MNEMOSYNE_FORCE_LOCAL`, `MNEMOSYNE_LLM_REPO`, or `MNEMOSYNE_HOST_LLM_ENABLED`; it preserves API keys/endpoints and non-default embedding model/dimension values you added yourself.
 
 ## After install
 
