@@ -26,6 +26,7 @@ from .env_template import (
     merge_env_text,
     render_env_block,
 )
+from .soul_generator import SoulAnswers, generate_soul_with_hermes
 
 
 LCM_REPO = "https://github.com/stephenschoettler/hermes-lcm"
@@ -65,6 +66,18 @@ class InstallerOptions:
     install_hmx_knowledge: bool = False
     install_impeccable: bool = False
     hmx_knowledge_url: str = HMX_KNOWLEDGE_REPO
+    generate_soul: bool = False
+    soul_agent_name: str = ""
+    soul_user_name: str = ""
+    soul_role: str = ""
+    soul_behavior: str = ""
+    soul_communication: str = ""
+    soul_focus: str = ""
+    soul_avoid: str = ""
+    soul_language: str = ""
+    soul_provider: str = ""
+    soul_model: str = ""
+    soul_overwrite: bool = False
 
 
 @dataclass(frozen=True)
@@ -211,6 +224,32 @@ def mnemosyne_pip_packages(mode: str) -> str:
     raise ValueError(f"Unknown Mnemosyne mode: {mode}")
 
 
+def soul_answers_from_options(options: InstallerOptions) -> SoulAnswers:
+    return SoulAnswers(
+        agent_name=options.soul_agent_name,
+        user_name=options.soul_user_name,
+        role=options.soul_role,
+        behavior=options.soul_behavior,
+        communication=options.soul_communication,
+        focus=options.soul_focus,
+        avoid=options.soul_avoid,
+        language=options.soul_language,
+    )
+
+
+def soul_generation_command_preview(options: InstallerOptions) -> str:
+    parts = [f"HERMES_HOME={options.base_home.expanduser()}", "hermes"]
+    if options.profile != "default":
+        parts.extend(["-p", options.profile])
+    parts.extend(["chat", "--quiet"])
+    if options.soul_provider:
+        parts.extend(["--provider", options.soul_provider])
+    if options.soul_model:
+        parts.extend(["--model", options.soul_model])
+    parts.extend(["-q", "'<generated SOUL.md prompt>'"])
+    return " ".join(parts)
+
+
 def build_plan(options: InstallerOptions) -> InstallPlan:
     base_home = options.base_home.expanduser()
     target_home = target_home_for(base_home, options.profile)
@@ -294,23 +333,32 @@ def build_plan(options: InstallerOptions) -> InstallPlan:
             f"hermes -p {options.profile} plugins list --plain --no-bundled"
         )
 
-    steps.extend(
-        [
+    final_steps = [
+        PlanStep(
+            "Merge config.yaml safely",
+            notes="Enable hermes-lcm + mnemosyne, set context.engine=lcm, disable built-in file memory.",
+        ),
+        PlanStep(
+            "Merge .env values",
+            notes="Write LCM tuning, selected Mnemosyne mode defaults, and any embedding API values explicitly supplied during install.",
+        ),
+    ]
+    if options.generate_soul:
+        final_steps.append(
             PlanStep(
-                "Merge config.yaml safely",
-                notes="Enable hermes-lcm + mnemosyne, set context.engine=lcm, disable built-in file memory.",
-            ),
-            PlanStep(
-                "Merge .env values",
-                notes="Write LCM tuning, selected Mnemosyne mode defaults, and any embedding API values explicitly supplied during install.",
-            ),
-            PlanStep(
-                "Verify",
-                verify_command,
-                "Restart Hermes manually after applying changes, then run these checks.",
-            ),
-        ]
+                "Generate SOUL.md with Hermes AI backend",
+                soul_generation_command_preview(options),
+                f"Writes {target_home / 'SOUL.md'}; existing files require overwrite approval and are backed up first.",
+            )
+        )
+    final_steps.append(
+        PlanStep(
+            "Verify",
+            verify_command,
+            "Restart Hermes manually after applying changes, then run these checks.",
+        )
     )
+    steps.extend(final_steps)
 
     return InstallPlan(
         options=options,
@@ -487,6 +535,57 @@ def merge_config_and_env(plan: InstallPlan) -> None:
     plan.env_path.write_text(merge_env_text(existing_env, env_values, managed_keys=managed_env_keys()))
 
 
+def backup_soul_file(soul_path: Path) -> Path:
+    backup_dir = soul_path.parent / "backups" / (
+        "hermes-stack-bootstrap-" + datetime.now().strftime("%Y%m%d-%H%M%S")
+    )
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(soul_path, backup_dir / soul_path.name)
+    return backup_dir
+
+
+def resolve_soul_overwrite_before_apply(plan: InstallPlan) -> InstallPlan:
+    if not plan.options.generate_soul or plan.options.dry_run:
+        return plan
+    soul_path = plan.target_home / "SOUL.md"
+    if not soul_path.exists() or plan.options.soul_overwrite:
+        return plan
+    if plan.options.yes:
+        raise ValueError(f"SOUL.md already exists at {soul_path}; pass --soul-overwrite to replace it")
+    answer = input(f"SOUL.md already exists at {soul_path}. Overwrite after backup? [y/N] ").strip().lower()
+    if answer not in {"y", "yes"}:
+        print("SOUL.md generation skipped.")
+        return dataclasses.replace(plan, options=dataclasses.replace(plan.options, generate_soul=False))
+    return dataclasses.replace(plan, options=dataclasses.replace(plan.options, soul_overwrite=True))
+
+
+def apply_soul_generation(plan: InstallPlan) -> None:
+    if not plan.options.generate_soul:
+        return
+    soul_path = plan.target_home / "SOUL.md"
+    if plan.options.dry_run:
+        print(f"DRY-RUN would generate SOUL.md via Hermes backend: {soul_path}")
+        return
+
+    if soul_path.exists() and not plan.options.soul_overwrite:
+        raise ValueError(f"SOUL.md already exists at {soul_path}; pass --soul-overwrite to replace it")
+
+    generated = generate_soul_with_hermes(
+        base_home=plan.options.base_home.expanduser(),
+        profile=plan.options.profile,
+        provider=plan.options.soul_provider,
+        model=plan.options.soul_model,
+        answers=soul_answers_from_options(plan.options),
+    )
+
+    plan.target_home.mkdir(parents=True, exist_ok=True)
+    if soul_path.exists():
+        backup_dir = backup_soul_file(soul_path)
+        print(f"SOUL.md backup written: {backup_dir}")
+    soul_path.write_text(generated.rstrip() + "\n", encoding="utf-8")
+    print(f"SOUL.md written: {soul_path}")
+
+
 def run_verification(plan: InstallPlan) -> None:
     if plan.options.dry_run:
         print("DRY-RUN verification skipped")
@@ -513,11 +612,13 @@ def apply_plan(plan: InstallPlan) -> None:
         if answer not in {"y", "yes"}:
             print("Aborted.")
             return
+    plan = resolve_soul_overwrite_before_apply(plan)
     install_lcm(plan)
     install_mnemosyne(plan)
     install_progress_tail(plan)
     install_optional_skills(plan)
     merge_config_and_env(plan)
+    apply_soul_generation(plan)
     run_verification(plan)
     print("\nDone. Restart Hermes manually after applying changes: /restart")
 
@@ -574,6 +675,47 @@ def apply_full_online_embedding_env_defaults(args: argparse.Namespace, env: os._
         args.mnemosyne_embedding_model = _env_get(env, "MNEMOSYNE_EMBEDDING_MODEL", "")
     if not args.mnemosyne_embedding_dim:
         args.mnemosyne_embedding_dim = _env_get(env, "MNEMOSYNE_EMBEDDING_DIM", "")
+
+
+def validate_soul_options(args: argparse.Namespace) -> None:
+    if not args.generate_soul:
+        return
+    required = {
+        "soul_agent_name": "--soul-agent-name",
+        "soul_user_name": "--soul-user-name",
+        "soul_role": "--soul-role",
+        "soul_behavior": "--soul-behavior",
+        "soul_communication": "--soul-communication",
+        "soul_focus": "--soul-focus",
+        "soul_avoid": "--soul-avoid",
+        "soul_language": "--soul-language",
+    }
+    for attr, flag in required.items():
+        if not getattr(args, attr, "").strip():
+            raise ValueError(f"--generate-soul requires {flag}")
+
+
+def prompt_yes_no(prompt: str, default: bool = False) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    answer = input(f"{prompt} [{suffix}] ").strip().lower()
+    if not answer:
+        return default
+    return answer in {"y", "yes"}
+
+
+def prompt_soul_answers(args: argparse.Namespace) -> None:
+    args.soul_agent_name = prompt_default("Agent name", args.soul_agent_name or "Hermes")
+    args.soul_user_name = prompt_default("User name", args.soul_user_name)
+    args.soul_role = prompt_default("Agent role", args.soul_role or "generalist assistant")
+    args.soul_behavior = prompt_default("Behavior / personality", args.soul_behavior)
+    args.soul_communication = prompt_default("Communication style", args.soul_communication)
+    args.soul_focus = prompt_default("Main focus", args.soul_focus)
+    args.soul_avoid = prompt_default("Things to avoid", args.soul_avoid)
+    args.soul_language = prompt_default("Default language", args.soul_language or "match user language")
+    args.soul_provider = prompt_default(
+        "SOUL generation provider override (empty = Hermes default)", args.soul_provider
+    )
+    args.soul_model = prompt_default("SOUL generation model override (empty = Hermes default)", args.soul_model)
 
 
 def wizard(argv: Iterable[str] | None = None, *, env: os._Environ[str] | dict[str, str] | None = None) -> InstallerOptions:
@@ -646,6 +788,18 @@ def wizard(argv: Iterable[str] | None = None, *, env: os._Environ[str] | dict[st
     parser.add_argument("--install-superpowers", action="store_true")
     parser.add_argument("--install-hmx-knowledge", action="store_true")
     parser.add_argument("--install-impeccable", action="store_true")
+    parser.add_argument("--generate-soul", action="store_true", help="Generate SOUL.md once via the user's Hermes AI backend.")
+    parser.add_argument("--soul-agent-name", default="")
+    parser.add_argument("--soul-user-name", default="")
+    parser.add_argument("--soul-role", default="")
+    parser.add_argument("--soul-behavior", default="")
+    parser.add_argument("--soul-communication", default="")
+    parser.add_argument("--soul-focus", default="")
+    parser.add_argument("--soul-avoid", default="")
+    parser.add_argument("--soul-language", default="")
+    parser.add_argument("--soul-provider", default="", help="Optional provider override for the Hermes SOUL generation call.")
+    parser.add_argument("--soul-model", default="", help="Optional model override for the Hermes SOUL generation call.")
+    parser.add_argument("--soul-overwrite", action="store_true", help="Allow replacing an existing SOUL.md after backup.")
     parser.add_argument(
         "--hmx-knowledge-url",
         default=_env_get(runtime_env, "HMX_KNOWLEDGE_GIT_URL", HMX_KNOWLEDGE_REPO),
@@ -702,6 +856,10 @@ def wizard(argv: Iterable[str] | None = None, *, env: os._Environ[str] | dict[st
                 "LCM expansion model (empty = summary model / Hermes auxiliary)",
                 args.lcm_expansion_model,
             )
+        if not args.generate_soul:
+            args.generate_soul = prompt_yes_no("Generate SOUL.md with Hermes AI backend?", False)
+        if args.generate_soul:
+            prompt_soul_answers(args)
     if args.summary_model:
         args.lcm_summary_model = args.summary_model
         if not args.lcm_expansion_model:
@@ -714,6 +872,7 @@ def wizard(argv: Iterable[str] | None = None, *, env: os._Environ[str] | dict[st
         model=args.mnemosyne_embedding_model,
         dim=args.mnemosyne_embedding_dim,
     )
+    validate_soul_options(args)
 
     return InstallerOptions(
         base_home=home,
@@ -738,6 +897,18 @@ def wizard(argv: Iterable[str] | None = None, *, env: os._Environ[str] | dict[st
         install_hmx_knowledge=args.install_hmx_knowledge,
         install_impeccable=args.install_impeccable,
         hmx_knowledge_url=args.hmx_knowledge_url,
+        generate_soul=args.generate_soul,
+        soul_agent_name=args.soul_agent_name,
+        soul_user_name=args.soul_user_name,
+        soul_role=args.soul_role,
+        soul_behavior=args.soul_behavior,
+        soul_communication=args.soul_communication,
+        soul_focus=args.soul_focus,
+        soul_avoid=args.soul_avoid,
+        soul_language=args.soul_language,
+        soul_provider=args.soul_provider,
+        soul_model=args.soul_model,
+        soul_overwrite=args.soul_overwrite,
     )
 
 

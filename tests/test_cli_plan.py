@@ -1,4 +1,5 @@
 import io
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -6,6 +7,7 @@ from unittest.mock import patch
 from hermes_stack_bootstrap.cli import (
     PROGRESS_TAIL_REF,
     InstallerOptions,
+    apply_soul_generation,
     base_home_from_config_path,
     build_plan,
     build_plans,
@@ -38,7 +40,7 @@ class CliPlanTests(unittest.TestCase):
     def test_wizard_allows_manual_base_home_override(self):
         with (
             patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch("builtins.input", side_effect=["/opt/hermes", "work", "", "", ""]),
+            patch("builtins.input", side_effect=["/opt/hermes", "work", "", "", "", "n"]),
         ):
             options = wizard([])
 
@@ -202,6 +204,7 @@ class CliPlanTests(unittest.TestCase):
                     "1536",
                     "",
                     "",
+                    "n",
                 ],
             ),
             patch("getpass.getpass", return_value="secret-from-prompt") as getpass_mock,
@@ -295,6 +298,174 @@ class CliPlanTests(unittest.TestCase):
             "git clone --depth=1 https://github.com/pbakaus/impeccable /tmp/hermes/skills/vendor/impeccable",
             commands,
         )
+
+    def test_wizard_accepts_noninteractive_soul_generation_options(self):
+        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
+            options = wizard(
+                [
+                    "--yes",
+                    "--generate-soul",
+                    "--soul-agent-name",
+                    "Gatot",
+                    "--soul-user-name",
+                    "Zhafron",
+                    "--soul-role",
+                    "generalist senior operator",
+                    "--soul-behavior",
+                    "direct, skeptical, useful",
+                    "--soul-communication",
+                    "casual Indonesian, concise",
+                    "--soul-focus",
+                    "software engineering and operations",
+                    "--soul-avoid",
+                    "sycophancy and fake certainty",
+                    "--soul-language",
+                    "match user language",
+                    "--soul-provider",
+                    "openrouter",
+                    "--soul-model",
+                    "anthropic/claude-sonnet-4",
+                    "--soul-overwrite",
+                ]
+            )
+
+        self.assertTrue(options.generate_soul)
+        self.assertEqual(options.soul_agent_name, "Gatot")
+        self.assertEqual(options.soul_user_name, "Zhafron")
+        self.assertEqual(options.soul_provider, "openrouter")
+        self.assertEqual(options.soul_model, "anthropic/claude-sonnet-4")
+        self.assertTrue(options.soul_overwrite)
+
+    def test_wizard_prompts_for_interactive_soul_answers(self):
+        with (
+            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
+            patch(
+                "builtins.input",
+                side_effect=[
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "y",
+                    "Gatot",
+                    "Zhafron",
+                    "generalist senior operator",
+                    "direct, skeptical, useful",
+                    "casual Indonesian, concise",
+                    "software engineering and operations",
+                    "sycophancy and fake certainty",
+                    "match user language",
+                    "openrouter",
+                    "anthropic/claude-sonnet-4",
+                ],
+            ),
+        ):
+            options = wizard([])
+
+        self.assertTrue(options.generate_soul)
+        self.assertEqual(options.soul_agent_name, "Gatot")
+        self.assertEqual(options.soul_user_name, "Zhafron")
+        self.assertEqual(options.soul_role, "generalist senior operator")
+        self.assertEqual(options.soul_behavior, "direct, skeptical, useful")
+        self.assertEqual(options.soul_communication, "casual Indonesian, concise")
+        self.assertEqual(options.soul_focus, "software engineering and operations")
+        self.assertEqual(options.soul_avoid, "sycophancy and fake certainty")
+        self.assertEqual(options.soul_language, "match user language")
+        self.assertEqual(options.soul_provider, "openrouter")
+        self.assertEqual(options.soul_model, "anthropic/claude-sonnet-4")
+
+    def test_wizard_rejects_noninteractive_generate_soul_when_required_answers_missing(self):
+        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
+            with self.assertRaisesRegex(ValueError, "--soul-agent-name"):
+                wizard(["--yes", "--generate-soul"])
+
+    def test_build_plan_includes_soul_generation_step(self):
+        options = InstallerOptions(
+            base_home=Path("/tmp/hermes"),
+            profile="work",
+            yes=True,
+            dry_run=True,
+            generate_soul=True,
+            soul_agent_name="Gatot",
+            soul_user_name="Zhafron",
+            soul_role="operator",
+            soul_behavior="direct",
+            soul_communication="concise",
+            soul_focus="engineering",
+            soul_avoid="sycophancy",
+            soul_language="match user",
+            soul_model="gpt-5.1-mini",
+        )
+
+        plan = build_plan(options)
+        titles = [step.title for step in plan.steps]
+        commands = [step.command for step in plan.steps if step.command]
+
+        self.assertIn("Generate SOUL.md with Hermes AI backend", titles)
+        self.assertIn("HERMES_HOME=/tmp/hermes hermes -p work chat --quiet --model gpt-5.1-mini -q '<generated SOUL.md prompt>'", commands)
+
+    def test_apply_soul_generation_writes_generated_soul_and_backs_up_existing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target_home = Path(tmp) / "profiles" / "work"
+            target_home.mkdir(parents=True)
+            soul_path = target_home / "SOUL.md"
+            soul_path.write_text("old soul", encoding="utf-8")
+            options = InstallerOptions(
+                base_home=Path(tmp),
+                profile="work",
+                yes=True,
+                dry_run=False,
+                generate_soul=True,
+                soul_agent_name="Gatot",
+                soul_user_name="Zhafron",
+                soul_role="operator",
+                soul_behavior="direct",
+                soul_communication="concise",
+                soul_focus="engineering",
+                soul_avoid="sycophancy",
+                soul_language="match user",
+                soul_overwrite=True,
+            )
+            plan = build_plan(options)
+
+            with patch("hermes_stack_bootstrap.cli.generate_soul_with_hermes", return_value="# Identity\n\nGenerated") as gen_mock:
+                apply_soul_generation(plan)
+
+            self.assertEqual(soul_path.read_text(encoding="utf-8"), "# Identity\n\nGenerated\n")
+            backups = list((target_home / "backups").glob("hermes-stack-bootstrap-*/SOUL.md"))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_text(encoding="utf-8"), "old soul")
+            gen_mock.assert_called_once()
+
+    def test_apply_soul_generation_failure_does_not_overwrite_existing_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target_home = Path(tmp)
+            soul_path = target_home / "SOUL.md"
+            soul_path.write_text("old soul", encoding="utf-8")
+            options = InstallerOptions(
+                base_home=Path(tmp),
+                profile="default",
+                yes=True,
+                dry_run=False,
+                generate_soul=True,
+                soul_agent_name="Gatot",
+                soul_user_name="Zhafron",
+                soul_role="operator",
+                soul_behavior="direct",
+                soul_communication="concise",
+                soul_focus="engineering",
+                soul_avoid="sycophancy",
+                soul_language="match user",
+                soul_overwrite=True,
+            )
+            plan = build_plan(options)
+
+            with patch("hermes_stack_bootstrap.cli.generate_soul_with_hermes", side_effect=RuntimeError("backend failed")):
+                with self.assertRaisesRegex(RuntimeError, "backend failed"):
+                    apply_soul_generation(plan)
+
+            self.assertEqual(soul_path.read_text(encoding="utf-8"), "old soul")
 
 
 if __name__ == "__main__":

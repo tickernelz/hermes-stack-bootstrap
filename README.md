@@ -42,6 +42,7 @@ bash install.sh
 | `hermes-lcm` | clones/updates `https://github.com/stephenschoettler/hermes-lcm` into the selected Hermes plugin directory | follows the upstream repo layout |
 | `mnemosyne-memory` | installs mode-specific Mnemosyne package set into the Hermes runtime venv | default `full-local`; `hybrid` and `full-online` are available |
 | `hermes-progress-tail` | runs the upstream `install.sh` from the latest GitHub release | can be pinned with `--progress-tail-ref` |
+| `SOUL.md` generation | optional one-shot `hermes chat -q` call through the user's configured Hermes backend | enable with `--generate-soul`; no fallback mode |
 | `obra/superpowers` | optional `git clone --depth=1` into `skills/vendor/obra-superpowers` | enable with `--install-superpowers` |
 | HMX knowledge | optional clone into `skills/vendor/hmx-knowledge` | private repo; user must already have SSH/token access |
 | `pbakaus/impeccable` | optional `git clone --depth=1` into `skills/vendor/impeccable` | enable with `--install-impeccable` |
@@ -58,6 +59,7 @@ It only merges a small, reviewable set of config/env values:
 - exposes the `memory` toolset on Telegram so Mnemosyne tools are available there
 - writes LCM/Mnemosyne defaults for the selected mode
 - writes Mnemosyne embedding API credentials only when the user supplies them during the install run
+- optionally writes `SOUL.md` only when `--generate-soul` is enabled or the interactive wizard asks and the user agrees
 
 It does **not** write tokens, passwords, private keys, provider API keys, Telegram bot tokens, dashboard secrets, private endpoint credentials, or Mnemosyne embedding API credentials unless the user explicitly provides them to the installer.
 
@@ -162,6 +164,36 @@ MNEMOSYNE_EMBEDDING_DIM=1536 \
     --mnemosyne-llm-model anthropic/claude-sonnet-4
 ```
 
+Generate `SOUL.md` once through the user's configured Hermes AI backend:
+
+```bash
+bash install.sh --generate-soul
+```
+
+Non-interactive example:
+
+```bash
+bash install.sh --yes --generate-soul \
+  --soul-agent-name Gatot \
+  --soul-user-name Zhafron \
+  --soul-role "generalist senior operator" \
+  --soul-behavior "direct, skeptical, useful" \
+  --soul-communication "casual Indonesian, concise" \
+  --soul-focus "software engineering and operations" \
+  --soul-avoid "sycophancy, fake certainty, overengineering" \
+  --soul-language "match user language"
+```
+
+Use the user's Hermes default provider/model by default. Optional override:
+
+```bash
+bash install.sh --generate-soul \
+  --soul-provider openrouter \
+  --soul-model anthropic/claude-sonnet-4
+```
+
+If `SOUL.md` already exists, interactive mode asks before overwrite; non-interactive mode requires `--soul-overwrite`. Existing `SOUL.md` is backed up before replacement. If the Hermes backend call fails, the installer fails and does not write `SOUL.md`.
+
 Pin a specific progress-tail release instead of the latest release:
 
 ```bash
@@ -232,6 +264,32 @@ platform_toolsets:
 Unrelated config keys are preserved.
 
 `platform_toolsets.telegram: [memory]` is included because Telegram sessions otherwise may not expose Mnemosyne's tools.
+
+## SOUL.md generation
+
+`SOUL.md` is Hermes' primary identity file. The installer can generate it once by calling the user's own Hermes backend with `hermes chat -q`; no bootstrapper API key or fallback generation mode is used.
+
+Interactive mode asks for:
+
+- agent name
+- user name
+- agent role
+- behavior/personality
+- communication style
+- main focus
+- things to avoid
+- default language
+- optional provider/model override for the generation call
+
+The generated file targets:
+
+```text
+<hermes-profile>/SOUL.md
+```
+
+The prompt follows Hermes' documented boundary: `SOUL.md` should contain stable identity, tone, communication defaults, judgment posture, broad execution defaults, domain focus, and boundaries. It should not contain project-specific commands, paths, repo workflows, API keys, provider secrets, or temporary setup notes.
+
+Dry runs show that generation would happen but do not call the model. Real runs fail hard if the Hermes backend call fails; they do not fall back to a template and do not write partial output.
 
 ## Environment defaults
 
