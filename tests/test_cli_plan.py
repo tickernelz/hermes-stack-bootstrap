@@ -16,6 +16,7 @@ from hermes_stack_bootstrap.cli import (
     validate_runtime_options,
     wizard,
 )
+from hermes_stack_bootstrap.hermes_discovery import HermesRuntime
 
 
 class CliPlanTests(unittest.TestCase):
@@ -197,7 +198,7 @@ class CliPlanTests(unittest.TestCase):
             skip_mnemosyne=False,
         )
 
-        with self.assertRaisesRegex(ValueError, "Could not find Hermes runtime Python"):
+        with self.assertRaisesRegex(ValueError, "Python environment that runs Hermes"):
             validate_runtime_options(options)
 
     def test_validate_runtime_options_allows_missing_python_when_mnemosyne_skipped(self):
@@ -211,6 +212,47 @@ class CliPlanTests(unittest.TestCase):
         )
 
         validate_runtime_options(options)
+
+    def test_wizard_prompts_to_skip_mnemosyne_when_runtime_python_missing(self):
+        missing_runtime = HermesRuntime(
+            hermes_bin="/usr/local/bin/hermes",
+            hermes_bin_source="PATH",
+            hermes_python=None,
+            hermes_python_source="not found",
+        )
+        with (
+            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/home/lutfi22/.hermes")),
+            patch("hermes_stack_bootstrap.cli.discover_hermes_runtime", return_value=missing_runtime),
+            patch("builtins.input", side_effect=["", "s", "", "", "", "n"]),
+        ):
+            options = wizard([])
+
+        self.assertTrue(options.skip_mnemosyne)
+        self.assertIsNone(options.hermes_python)
+        self.assertEqual(options.hermes_python_source, "not found")
+
+    def test_wizard_accepts_manual_runtime_python_when_discovery_misses(self):
+        missing_runtime = HermesRuntime(
+            hermes_bin="/usr/local/bin/hermes",
+            hermes_bin_source="PATH",
+            hermes_python=None,
+            hermes_python_source="not found",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_python = Path(tmp) / "venv" / "bin" / "python"
+            runtime_python.parent.mkdir(parents=True)
+            runtime_python.write_text("#!/bin/sh\n", encoding="utf-8")
+            runtime_python.chmod(0o755)
+            with (
+                patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/home/lutfi22/.hermes")),
+                patch("hermes_stack_bootstrap.cli.discover_hermes_runtime", return_value=missing_runtime),
+                patch("builtins.input", side_effect=["", str(runtime_python), "", "hybrid", "", "", "", "", "n"]),
+            ):
+                options = wizard([])
+
+        self.assertFalse(options.skip_mnemosyne)
+        self.assertEqual(options.hermes_python, runtime_python)
+        self.assertEqual(options.hermes_python_source, "manual prompt")
 
     def test_wizard_accepts_mnemosyne_and_lcm_model_options(self):
         with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):

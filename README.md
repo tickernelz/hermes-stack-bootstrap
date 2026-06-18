@@ -96,6 +96,15 @@ Hermes CLI / runtime detection order:
 4. profile-local `hermes-agent/venv/bin/python`
 5. bounded filesystem scan for executable files named `hermes`
 
+Runtime discovery also understands common Hermes shell wrappers such as:
+
+```bash
+#!/usr/bin/env bash
+exec "/path/to/hermes-agent/venv/bin/hermes" "$@"
+```
+
+In that case it follows the `exec` target and uses the sibling `python` / `python3` from the same venv. If runtime Python still cannot be found in interactive mode, the wizard now stops early and lets the user either paste the Python path or skip Mnemosyne for that run instead of failing after all prompts.
+
 The filesystem scan is deliberately bounded and prunes pseudo/noisy trees such as `/proc`, `/sys`, `/dev`, `/run`, `/tmp`, `/mnt`, and `/media`. It searches for an executable named `hermes`; it does **not** assume `/opt` or any other fixed install directory.
 
 Interactive mode lets you override the detected profile base manually. For explicit shared-runtime installs:

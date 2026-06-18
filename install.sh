@@ -84,6 +84,56 @@ resolve_env_shebang_utility() {
   resolve_from_path "$executable_name"
 }
 
+infer_python_from_launcher_target() {
+  local target="${1:-}"
+  [[ -n "$target" ]] || return 1
+  local real_target
+  real_target="$(realpath "$target" 2>/dev/null || printf '%s\n' "$target")"
+  local target_dir
+  target_dir="$(dirname "$real_target")"
+  if looks_like_python_executable "$real_target" && is_executable "$real_target"; then
+    printf '%s\n' "$real_target"
+    return 0
+  fi
+  if is_executable "$target_dir/python"; then
+    printf '%s\n' "$target_dir/python"
+    return 0
+  fi
+  if is_executable "$target_dir/python3"; then
+    printf '%s\n' "$target_dir/python3"
+    return 0
+  fi
+  return 1
+}
+
+infer_python_from_shell_launcher() {
+  local real_bin="${1:-}"
+  [[ -n "$real_bin" ]] || return 1
+  local line
+  while IFS= read -r line; do
+    [[ "$line" == *exec* ]] || continue
+    local after_exec="${line#*exec }"
+    [[ "$after_exec" != "$line" ]] || continue
+    local command_token="${after_exec%%[[:space:]]*}"
+    command_token="${command_token%\"}"
+    command_token="${command_token#\"}"
+    command_token="${command_token%\'}"
+    command_token="${command_token#\'}"
+    [[ -n "$command_token" && "$command_token" != \$* ]] || continue
+    if [[ "$command_token" != /* ]]; then
+      command_token="$(resolve_from_path "$command_token" || true)"
+    fi
+    [[ -n "$command_token" ]] || continue
+    local inferred
+    inferred="$(infer_python_from_launcher_target "$command_token" || true)"
+    if [[ -n "$inferred" ]]; then
+      printf '%s\n' "$inferred"
+      return 0
+    fi
+  done < "$real_bin"
+  return 1
+}
+
 infer_python_from_hermes_bin() {
   local hermes_bin="${1:-}"
   [[ -n "$hermes_bin" ]] || return 1
@@ -114,9 +164,22 @@ infer_python_from_hermes_bin() {
         printf '%s\n' "$env_resolved"
         return 0
       fi
+      local shell_inferred
+      shell_inferred="$(infer_python_from_shell_launcher "$real_bin" || true)"
+      if [[ -n "$shell_inferred" ]]; then
+        printf '%s\n' "$shell_inferred"
+        return 0
+      fi
     elif looks_like_python_executable "$interpreter" && is_executable "$interpreter"; then
       printf '%s\n' "$interpreter"
       return 0
+    elif [[ "$(basename "$interpreter")" == "sh" || "$(basename "$interpreter")" == "bash" || "$(basename "$interpreter")" == "dash" || "$(basename "$interpreter")" == "zsh" ]]; then
+      local shell_inferred
+      shell_inferred="$(infer_python_from_shell_launcher "$real_bin" || true)"
+      if [[ -n "$shell_inferred" ]]; then
+        printf '%s\n' "$shell_inferred"
+        return 0
+      fi
     fi
   fi
   return 1

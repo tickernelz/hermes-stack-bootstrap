@@ -41,6 +41,32 @@ class HermesDiscoveryTests(unittest.TestCase):
 
             self.assertEqual(infer_python_from_hermes_bin(symlink), python)
 
+    def test_infer_python_from_bash_launcher_exec_target_sibling_python(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_bin = root / "hermes-agent" / "venv" / "bin"
+            runtime_hermes = self.make_executable(runtime_bin / "hermes", "#!/usr/bin/env python3\nprint('real hermes')\n")
+            python = self.make_executable(runtime_bin / "python")
+            wrapper = self.make_executable(
+                root / ".local" / "bin" / "hermes",
+                f"#!/usr/bin/env bash\nunset PYTHONPATH\nexec \"{runtime_hermes}\" \"$@\"\n",
+            )
+
+            self.assertEqual(infer_python_from_hermes_bin(wrapper), python)
+
+    def test_infer_python_from_bash_launcher_exec_target_env_assignment(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_bin = root / "apps" / "hermes" / "venv" / "bin"
+            runtime_hermes = self.make_executable(runtime_bin / "hermes", "#!/usr/bin/env python3\nprint('real hermes')\n")
+            python = self.make_executable(runtime_bin / "python3")
+            wrapper = self.make_executable(
+                root / "bin" / "hermes",
+                f"#!/bin/sh\nHERMES_HOME=/home/lutfi22/.hermes exec {runtime_hermes} \"$@\"\n",
+            )
+
+            self.assertEqual(infer_python_from_hermes_bin(wrapper), python)
+
     def test_infer_python_from_absolute_shebang(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

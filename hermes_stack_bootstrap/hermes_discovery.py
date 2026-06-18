@@ -9,6 +9,7 @@ while every user keeps profiles under ~/.hermes.
 from __future__ import annotations
 
 import os
+import shlex
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -143,21 +144,105 @@ def _python_from_env_shebang(target: str, *, env: Mapping[str, str] | None = Non
     return _resolve_env_utility_from_shebang_tokens(parts, env=runtime_env)
 
 
-def infer_python_from_hermes_bin(hermes_bin: str | Path, *, env: Mapping[str, str] | None = None) -> Path | None:
-    """Infer the Python executable that owns a Hermes script, if obvious.
+def _sibling_python_for(path: Path) -> Path | None:
+    for sibling in (path.parent / "python", path.parent / "python3"):
+        if _is_executable(sibling):
+            return sibling.resolve()
+    return None
 
-    Fast checks only: realpath sibling `python`/`python3` first, then an absolute
-    or `/usr/bin/env python...` shebang.
-    """
+
+def _looks_like_shell_launcher(target: str) -> bool:
+    parts = target.split()
+    if not parts:
+        return False
+    first = Path(parts[0]).name
+    if first in {"sh", "bash", "dash", "zsh", "ksh"}:
+        return True
+    if first == "env" and len(parts) > 1:
+        return Path(parts[-1]).name in {"sh", "bash", "dash", "zsh", "ksh"}
+    return False
+
+
+def _resolve_command_token(command: str, *, env: Mapping[str, str]) -> Path | None:
+    expanded = os.path.expandvars(command)
+    path = Path(expanded).expanduser()
+    if path.is_absolute() and _is_executable(path):
+        return path.resolve()
+    for raw_dir in env.get("PATH", "").split(os.pathsep):
+        if not raw_dir:
+            continue
+        candidate = Path(raw_dir).expanduser() / command
+        if _is_executable(candidate):
+            return candidate.resolve()
+    return None
+
+
+def _extract_exec_targets_from_shell_text(text: str, *, env: Mapping[str, str]) -> list[Path]:
+    targets: list[Path] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "exec" not in line:
+            continue
+        try:
+            tokens = shlex.split(line, comments=True, posix=True)
+        except ValueError:
+            continue
+        if "exec" not in tokens:
+            continue
+        index = tokens.index("exec") + 1
+        while index < len(tokens) and "=" in tokens[index] and not tokens[index].startswith("/"):
+            index += 1
+        if index >= len(tokens):
+            continue
+        command = tokens[index]
+        if command.startswith("$"):
+            continue
+        resolved = _resolve_command_token(command, env=env)
+        if resolved is not None:
+            targets.append(resolved)
+    return _dedupe_paths(targets)
+
+
+def _infer_python_from_shell_launcher(real: Path, *, env: Mapping[str, str], seen: set[Path]) -> Path | None:
+    try:
+        text = real.read_text(encoding="utf-8", errors="ignore")[:8192]
+    except OSError:
+        return None
+    for target in _extract_exec_targets_from_shell_text(text, env=env):
+        if target in seen:
+            continue
+        if _looks_like_python_executable(target):
+            return target.resolve()
+        sibling = _sibling_python_for(target)
+        if sibling is not None:
+            return sibling
+        nested = _infer_python_from_hermes_bin(target, env=env, seen=seen | {target})
+        if nested is not None:
+            return nested
+    return None
+
+
+def _infer_python_from_hermes_bin(
+    hermes_bin: str | Path,
+    *,
+    env: Mapping[str, str] | None = None,
+    seen: set[Path] | None = None,
+) -> Path | None:
+    runtime_env = os.environ if env is None else env
+    seen_paths = set() if seen is None else set(seen)
     path = Path(hermes_bin).expanduser()
     try:
         real = path.resolve()
     except OSError:
         real = path.absolute()
 
-    for sibling in (real.parent / "python", real.parent / "python3"):
-        if _is_executable(sibling):
-            return sibling.resolve()
+    if real in seen_paths:
+        return None
+    seen_paths.add(real)
+
+    sibling_python = _sibling_python_for(real)
+    if sibling_python is not None:
+        return sibling_python
 
     try:
         with real.open("rb") as handle:
@@ -168,14 +253,27 @@ def infer_python_from_hermes_bin(hermes_bin: str | Path, *, env: Mapping[str, st
     if not first_line.startswith("#!"):
         return None
     target = first_line[2:].strip()
+    if _looks_like_shell_launcher(target):
+        shell_inferred = _infer_python_from_shell_launcher(real, env=runtime_env, seen=seen_paths)
+        if shell_inferred is not None:
+            return shell_inferred
     if target.startswith("/"):
         first_token = target.split()[0]
         if Path(first_token).name == "env":
-            return _python_from_env_shebang(target, env=env)
+            return _python_from_env_shebang(target, env=runtime_env)
         candidate = Path(first_token)
         if _looks_like_python_executable(candidate) and _is_executable(candidate):
             return candidate.resolve()
-    return _python_from_env_shebang(target, env=env)
+    return _python_from_env_shebang(target, env=runtime_env)
+
+
+def infer_python_from_hermes_bin(hermes_bin: str | Path, *, env: Mapping[str, str] | None = None) -> Path | None:
+    """Infer the Python executable that owns a Hermes launcher, if obvious.
+
+    Handles real venv scripts, `/usr/bin/env python...` shebangs, and small
+    shell wrappers that `exec` the real Hermes venv script.
+    """
+    return _infer_python_from_hermes_bin(hermes_bin, env=env)
 
 
 def _should_skip_dir(path: Path, *, skip_root_prefixes: bool = True) -> bool:

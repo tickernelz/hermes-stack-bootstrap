@@ -27,7 +27,7 @@ from .env_template import (
     merge_env_text,
     render_env_block,
 )
-from .hermes_discovery import discover_hermes_runtime
+from .hermes_discovery import HermesRuntime, discover_hermes_runtime
 from .soul_generator import SoulAnswers, generate_soul_with_hermes
 
 
@@ -144,14 +144,28 @@ def hermes_bin_for_options(options: InstallerOptions) -> str:
     return options.hermes_bin or "hermes"
 
 
+def runtime_missing_message(options: InstallerOptions) -> str:
+    return "\n".join(
+        [
+            "Could not find the Python environment that runs Hermes, so Mnemosyne cannot be installed safely.",
+            f"Detected Hermes CLI: {hermes_bin_for_options(options)} ({options.hermes_bin_source})",
+            f"Detected profile base: {options.base_home.expanduser()}",
+            "",
+            "Fix options:",
+            "  1. Re-run with --hermes-python /path/to/python",
+            "  2. Or set HERMES_STACK_PYTHON=/path/to/python",
+            "  3. Or use --skip-mnemosyne if Mnemosyne is already installed",
+            "",
+            "Tip: if `which hermes` is a small shell wrapper, run `head -20 $(which hermes)` and use the Python from the venv it execs.",
+        ]
+    )
+
+
 def validate_runtime_options(options: InstallerOptions) -> None:
     if options.skip_mnemosyne:
         return
     if options.hermes_python is None:
-        raise ValueError(
-            "Could not find Hermes runtime Python. Pass --hermes-python /path/to/python "
-            "or set HERMES_STACK_PYTHON. Use --skip-mnemosyne if Mnemosyne is already installed."
-        )
+        raise ValueError(runtime_missing_message(options))
 
 
 def base_home_from_config_path(config_path: str | Path) -> Path:
@@ -743,6 +757,23 @@ def prompt_yes_no(prompt: str, default: bool = False) -> bool:
     return answer in {"y", "yes"}
 
 
+def prompt_missing_runtime_python(runtime: HermesRuntime) -> tuple[HermesRuntime, bool]:
+    print("\nHermes runtime Python was not found, so Mnemosyne cannot be installed safely yet.")
+    print(f"Detected Hermes CLI: {runtime.hermes_bin or 'not found'} ({runtime.hermes_bin_source})")
+    print("Enter the Python path used by Hermes, or type 's' to skip Mnemosyne for this run, or 'q' to abort.")
+    while True:
+        answer = input("Hermes runtime Python path [s]: ").strip()
+        if not answer or answer.lower() in {"s", "skip"}:
+            return runtime, True
+        if answer.lower() in {"q", "quit", "abort"}:
+            raise ValueError("Aborted: Hermes runtime Python was not found")
+        candidate = Path(answer).expanduser()
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return dataclasses.replace(runtime, hermes_python=candidate, hermes_python_source="manual prompt"), False
+        print(f"Not executable: {candidate}")
+        print("Try a path like /path/to/hermes-agent/venv/bin/python, or type 's' to skip Mnemosyne.")
+
+
 def prompt_soul_answers(args: argparse.Namespace) -> None:
     args.soul_agent_name = prompt_default("Agent name", args.soul_agent_name or "Hermes")
     args.soul_user_name = prompt_default("User name", args.soul_user_name)
@@ -876,15 +907,21 @@ def wizard(argv: Iterable[str] | None = None, *, env: os._Environ[str] | dict[st
             hermes_python=args.hermes_python,
             env=runtime_env,
         )
+        print(f"Detected Hermes CLI: {runtime.hermes_bin or 'not found'} ({runtime.hermes_bin_source})")
+        print(f"Detected Hermes runtime Python: {runtime.hermes_python or 'not found'} ({runtime.hermes_python_source})")
+        if runtime.hermes_python is None and not args.skip_mnemosyne:
+            runtime, skip_mnemosyne = prompt_missing_runtime_python(runtime)
+            args.skip_mnemosyne = skip_mnemosyne
         if args.profile is None:
             profiles = parse_profiles(prompt_default("Target profile(s), comma-separated", "default"))
-        args.mnemosyne_mode = prompt_default(
-            "Mnemosyne mode (full-local, hybrid, full-online)", args.mnemosyne_mode
-        ).strip().lower()
-        if args.mnemosyne_mode not in MNEMOSYNE_MODES:
-            raise ValueError(f"Unknown Mnemosyne mode: {args.mnemosyne_mode}")
+        if not args.skip_mnemosyne:
+            args.mnemosyne_mode = prompt_default(
+                "Mnemosyne mode (full-local, hybrid, full-online)", args.mnemosyne_mode
+            ).strip().lower()
+            if args.mnemosyne_mode not in MNEMOSYNE_MODES:
+                raise ValueError(f"Unknown Mnemosyne mode: {args.mnemosyne_mode}")
         apply_full_online_embedding_env_defaults(args, runtime_env)
-        if args.mnemosyne_mode in {"hybrid", "full-online"}:
+        if not args.skip_mnemosyne and args.mnemosyne_mode in {"hybrid", "full-online"}:
             args.mnemosyne_llm_provider = prompt_default(
                 "Mnemosyne Hermes LLM provider override (empty = Hermes auxiliary/default)",
                 args.mnemosyne_llm_provider,
@@ -893,7 +930,7 @@ def wizard(argv: Iterable[str] | None = None, *, env: os._Environ[str] | dict[st
                 "Mnemosyne Hermes LLM model override (empty = Hermes auxiliary/default)",
                 args.mnemosyne_llm_model,
             )
-        if args.mnemosyne_mode == "full-online":
+        if not args.skip_mnemosyne and args.mnemosyne_mode == "full-online":
             args.mnemosyne_embedding_api_url = prompt_default(
                 "Mnemosyne embedding API URL (empty = configure later)",
                 args.mnemosyne_embedding_api_url,
