@@ -97,9 +97,10 @@ def build_hermes_soul_command(
     provider: str,
     model: str,
     prompt: str,
+    hermes_bin: str = "hermes",
 ) -> list[str]:
     """Build the Hermes CLI command that calls the user's configured backend."""
-    command = ["hermes"]
+    command = [hermes_bin or "hermes"]
     if profile != "default":
         command.extend(["-p", profile])
     command.extend(["chat", "--quiet"])
@@ -118,6 +119,7 @@ def generate_soul_with_hermes(
     provider: str,
     model: str,
     answers: SoulAnswers,
+    hermes_bin: str = "hermes",
     timeout: int = 300,
 ) -> str:
     """Generate SOUL.md via the user's Hermes backend, or fail loudly."""
@@ -127,6 +129,7 @@ def generate_soul_with_hermes(
         provider=provider,
         model=model,
         prompt=prompt,
+        hermes_bin=hermes_bin,
     )
     env = os.environ.copy()
     env["HERMES_HOME"] = str(base_home.expanduser())

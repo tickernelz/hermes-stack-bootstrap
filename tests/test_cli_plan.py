@@ -13,6 +13,7 @@ from hermes_stack_bootstrap.cli import (
     build_plans,
     parse_profiles,
     print_plan,
+    validate_runtime_options,
     wizard,
 )
 
@@ -114,6 +115,34 @@ class CliPlanTests(unittest.TestCase):
             commands,
         )
 
+    def test_build_plan_can_use_global_runtime_python_with_user_profile_home(self):
+        options = InstallerOptions(
+            base_home=Path("/home/lutfi22/.hermes"),
+            profile="default",
+            yes=True,
+            dry_run=True,
+            hermes_bin="/usr/local/bin/hermes",
+            hermes_bin_source="path",
+            hermes_python=Path("/srv/shared/hermes/runtime/venv/bin/python"),
+            hermes_python_source="discovered",
+        )
+
+        plan = build_plan(options)
+        commands = [step.command for step in plan.steps if step.command]
+
+        self.assertIn(
+            "/srv/shared/hermes/runtime/venv/bin/python -m pip install --upgrade --no-cache-dir 'mnemosyne-memory[all]' sqlite-vec",
+            commands,
+        )
+        self.assertIn(
+            "HERMES_HOME=/home/lutfi22/.hermes /srv/shared/hermes/runtime/venv/bin/python -m mnemosyne.install",
+            commands,
+        )
+        self.assertIn(
+            "/usr/local/bin/hermes memory status && /usr/local/bin/hermes mnemosyne stats && /usr/local/bin/hermes plugins list --plain --no-bundled",
+            commands,
+        )
+
     def test_build_plan_uses_mode_specific_mnemosyne_install_commands(self):
         hybrid = InstallerOptions(
             base_home=Path("/tmp/hermes"),
@@ -141,6 +170,47 @@ class CliPlanTests(unittest.TestCase):
             "/tmp/hermes/hermes-agent/venv/bin/python -m pip install --upgrade --no-cache-dir mnemosyne-memory sqlite-vec numpy",
             online_commands,
         )
+
+    def test_wizard_accepts_global_runtime_overrides_from_environment(self):
+        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/home/lutfi22/.hermes")):
+            options = wizard(
+                ["--yes", "--skip-mnemosyne"],
+                env={
+                    "HERMES_BIN": "/usr/local/bin/hermes",
+                    "HERMES_STACK_PYTHON": "/srv/shared/hermes/venv/bin/python",
+                },
+            )
+
+        self.assertEqual(options.base_home, Path("/home/lutfi22/.hermes"))
+        self.assertEqual(options.hermes_bin, "/usr/local/bin/hermes")
+        self.assertEqual(options.hermes_python, Path("/srv/shared/hermes/venv/bin/python"))
+        self.assertEqual(options.hermes_bin_source, "explicit")
+        self.assertEqual(options.hermes_python_source, "explicit")
+
+    def test_validate_runtime_options_requires_python_when_mnemosyne_needed(self):
+        options = InstallerOptions(
+            base_home=Path("/tmp/hermes"),
+            profile="default",
+            yes=True,
+            dry_run=True,
+            hermes_python=None,
+            skip_mnemosyne=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "Could not find Hermes runtime Python"):
+            validate_runtime_options(options)
+
+    def test_validate_runtime_options_allows_missing_python_when_mnemosyne_skipped(self):
+        options = InstallerOptions(
+            base_home=Path("/tmp/hermes"),
+            profile="default",
+            yes=True,
+            dry_run=True,
+            hermes_python=None,
+            skip_mnemosyne=True,
+        )
+
+        validate_runtime_options(options)
 
     def test_wizard_accepts_mnemosyne_and_lcm_model_options(self):
         with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
@@ -228,6 +298,35 @@ class CliPlanTests(unittest.TestCase):
                     ],
                     env={"MNEMOSYNE_EMBEDDING_API_KEY": "secret-without-url"},
                 )
+
+    def test_print_plan_shows_runtime_discovery_paths(self):
+        options = InstallerOptions(
+            base_home=Path("/home/lutfi22/.hermes"),
+            profile="default",
+            yes=True,
+            dry_run=True,
+            hermes_bin="/usr/local/bin/hermes",
+            hermes_bin_source="path",
+            hermes_python=Path("/srv/shared/hermes/venv/bin/python"),
+            hermes_python_source="bounded filesystem scan",
+            skip_lcm=True,
+            skip_mnemosyne=True,
+            skip_progress_tail=True,
+        )
+        plan = build_plan(options)
+        buffer = io.StringIO()
+
+        with patch("sys.stdout", buffer):
+            print_plan(plan)
+
+        output = buffer.getvalue()
+        self.assertIn("Hermes profile base", output)
+        self.assertIn("/home/lutfi22/.hermes", output)
+        self.assertIn("Hermes CLI", output)
+        self.assertIn("/usr/local/bin/hermes", output)
+        self.assertIn("Hermes Python", output)
+        self.assertIn("/srv/shared/hermes/venv/bin/python", output)
+        self.assertIn("bounded filesystem scan", output)
 
     def test_plan_output_never_prints_embedding_api_key_value(self):
         options = InstallerOptions(

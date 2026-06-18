@@ -9,6 +9,7 @@ import getpass
 import json
 import os
 import shutil
+import shlex
 import subprocess
 import sys
 import urllib.request
@@ -26,6 +27,7 @@ from .env_template import (
     merge_env_text,
     render_env_block,
 )
+from .hermes_discovery import discover_hermes_runtime
 from .soul_generator import SoulAnswers, generate_soul_with_hermes
 
 
@@ -46,6 +48,10 @@ SENSITIVE_ENV_KEYS = {"MNEMOSYNE_EMBEDDING_API_KEY"}
 class InstallerOptions:
     base_home: Path
     profile: str
+    hermes_bin: str = "hermes"
+    hermes_bin_source: str = "default"
+    hermes_python: Path | None = None
+    hermes_python_source: str = "profile-local default"
     yes: bool = False
     dry_run: bool = False
     summary_model: str = ""
@@ -96,6 +102,10 @@ class InstallPlan:
     steps: tuple[PlanStep, ...]
 
 
+def shell_quote(value: str | Path) -> str:
+    return shlex.quote(str(value))
+
+
 def target_home_for(base_home: Path, profile: str) -> Path:
     if profile == "default":
         return base_home
@@ -126,6 +136,24 @@ def hermes_python_for(base_home: Path) -> Path:
     return base_home / "hermes-agent" / "venv" / "bin" / "python"
 
 
+def runtime_python_for_options(options: InstallerOptions) -> Path:
+    return options.hermes_python or hermes_python_for(options.base_home.expanduser())
+
+
+def hermes_bin_for_options(options: InstallerOptions) -> str:
+    return options.hermes_bin or "hermes"
+
+
+def validate_runtime_options(options: InstallerOptions) -> None:
+    if options.skip_mnemosyne:
+        return
+    if options.hermes_python is None:
+        raise ValueError(
+            "Could not find Hermes runtime Python. Pass --hermes-python /path/to/python "
+            "or set HERMES_STACK_PYTHON. Use --skip-mnemosyne if Mnemosyne is already installed."
+        )
+
+
 def base_home_from_config_path(config_path: str | Path) -> Path:
     """Infer Hermes base home from `hermes config path` output."""
     path = Path(str(config_path).strip()).expanduser()
@@ -137,17 +165,17 @@ def base_home_from_config_path(config_path: str | Path) -> Path:
     return path.parent
 
 
-def detect_base_home() -> Path:
+def detect_base_home(hermes_bin: str | None = None) -> Path:
     """Best-effort Hermes base path detection with safe fallbacks."""
     env_home = os.environ.get("HERMES_HOME")
     if env_home:
         return Path(env_home).expanduser()
 
-    hermes_bin = shutil.which("hermes")
-    if hermes_bin:
+    selected_hermes_bin = hermes_bin or os.environ.get("HERMES_BIN") or shutil.which("hermes")
+    if selected_hermes_bin:
         try:
             completed = subprocess.run(
-                [hermes_bin, "config", "path"],
+                [selected_hermes_bin, "config", "path"],
                 check=True,
                 capture_output=True,
                 text=True,
@@ -238,7 +266,7 @@ def soul_answers_from_options(options: InstallerOptions) -> SoulAnswers:
 
 
 def soul_generation_command_preview(options: InstallerOptions) -> str:
-    parts = [f"HERMES_HOME={options.base_home.expanduser()}", "hermes"]
+    parts = [f"HERMES_HOME={shell_quote(options.base_home.expanduser())}", shell_quote(hermes_bin_for_options(options))]
     if options.profile != "default":
         parts.extend(["-p", options.profile])
     parts.extend(["chat", "--quiet"])
@@ -253,7 +281,10 @@ def soul_generation_command_preview(options: InstallerOptions) -> str:
 def build_plan(options: InstallerOptions) -> InstallPlan:
     base_home = options.base_home.expanduser()
     target_home = target_home_for(base_home, options.profile)
-    hermes_py = hermes_python_for(base_home)
+    hermes_py = runtime_python_for_options(options)
+    hermes_py_cmd = shell_quote(hermes_py)
+    hermes_bin = hermes_bin_for_options(options)
+    hermes_bin_cmd = shell_quote(hermes_bin)
     steps: list[PlanStep] = []
 
     if not options.skip_lcm:
@@ -271,12 +302,12 @@ def build_plan(options: InstallerOptions) -> InstallPlan:
             [
                 PlanStep(
                     f"Install Mnemosyne package for {options.mnemosyne_mode} mode into Hermes runtime venv",
-                    f"{hermes_py} -m pip install --upgrade --no-cache-dir {mnemosyne_pip_packages(options.mnemosyne_mode)}",
+                    f"{hermes_py_cmd} -m pip install --upgrade --no-cache-dir {mnemosyne_pip_packages(options.mnemosyne_mode)}",
                     "full-local uses local embeddings + local GGUF LLM; hybrid uses local embeddings + Hermes host LLM; full-online uses user-supplied embedding API settings and routes LLM via Hermes.",
                 ),
                 PlanStep(
                     "Register Mnemosyne as Hermes memory provider",
-                    f"HERMES_HOME={target_home} {hermes_py} -m mnemosyne.install",
+                    f"HERMES_HOME={shell_quote(target_home)} {hermes_py_cmd} -m mnemosyne.install",
                     "The installer also merges memory.provider=mnemosyne and plugins.enabled+=mnemosyne.",
                 ),
             ]
@@ -325,12 +356,12 @@ def build_plan(options: InstallerOptions) -> InstallPlan:
             )
         )
 
-    verify_command = "hermes memory status && hermes mnemosyne stats && hermes plugins list --plain --no-bundled"
+    verify_command = f"{hermes_bin_cmd} memory status && {hermes_bin_cmd} mnemosyne stats && {hermes_bin_cmd} plugins list --plain --no-bundled"
     if options.profile != "default":
         verify_command = (
-            f"hermes -p {options.profile} memory status && "
-            f"hermes -p {options.profile} mnemosyne stats && "
-            f"hermes -p {options.profile} plugins list --plain --no-bundled"
+            f"{hermes_bin_cmd} -p {options.profile} memory status && "
+            f"{hermes_bin_cmd} -p {options.profile} mnemosyne stats && "
+            f"{hermes_bin_cmd} -p {options.profile} plugins list --plain --no-bundled"
         )
 
     final_steps = [
@@ -381,6 +412,11 @@ def print_plan(plan: InstallPlan) -> None:
     print("\nHermes Stack Bootstrap plan")
     print("=" * 28)
     print(f"Target profile : {plan.options.profile}")
+    print(f"Hermes profile base : {plan.options.base_home.expanduser()}")
+    print(f"Hermes CLI          : {hermes_bin_for_options(plan.options)} ({plan.options.hermes_bin_source})")
+    hermes_py = plan.options.hermes_python
+    hermes_py_display = str(hermes_py) if hermes_py is not None else "not found"
+    print(f"Hermes Python       : {hermes_py_display} ({plan.options.hermes_python_source})")
     print(f"Target home    : {plan.target_home}")
     print(f"Config path    : {plan.config_path}")
     print(f"Env path       : {plan.env_path}")
@@ -436,13 +472,14 @@ def install_lcm(plan: InstallPlan) -> None:
 def install_mnemosyne(plan: InstallPlan) -> None:
     if plan.options.skip_mnemosyne:
         return
-    hermes_py = hermes_python_for(plan.options.base_home.expanduser())
+    hermes_py = runtime_python_for_options(plan.options)
+    hermes_py_cmd = shell_quote(hermes_py)
     run_command(
-        f"{hermes_py} -m pip install --upgrade --no-cache-dir {mnemosyne_pip_packages(plan.options.mnemosyne_mode)}",
+        f"{hermes_py_cmd} -m pip install --upgrade --no-cache-dir {mnemosyne_pip_packages(plan.options.mnemosyne_mode)}",
         dry_run=plan.options.dry_run,
     )
     run_command(
-        f"HERMES_HOME={plan.target_home} {hermes_py} -m mnemosyne.install",
+        f"HERMES_HOME={shell_quote(plan.target_home)} {hermes_py_cmd} -m mnemosyne.install",
         dry_run=plan.options.dry_run,
     )
 
@@ -576,6 +613,7 @@ def apply_soul_generation(plan: InstallPlan) -> None:
         provider=plan.options.soul_provider,
         model=plan.options.soul_model,
         answers=soul_answers_from_options(plan.options),
+        hermes_bin=hermes_bin_for_options(plan.options),
     )
 
     plan.target_home.mkdir(parents=True, exist_ok=True)
@@ -590,22 +628,24 @@ def run_verification(plan: InstallPlan) -> None:
     if plan.options.dry_run:
         print("DRY-RUN verification skipped")
         return
+    hermes_bin = shell_quote(hermes_bin_for_options(plan.options))
     commands = [
-        "hermes memory status",
-        "hermes mnemosyne stats",
-        "hermes plugins list --plain --no-bundled",
+        f"{hermes_bin} memory status",
+        f"{hermes_bin} mnemosyne stats",
+        f"{hermes_bin} plugins list --plain --no-bundled",
     ]
     if plan.options.profile != "default":
         commands = [
-            f"hermes -p {plan.options.profile} memory status",
-            f"hermes -p {plan.options.profile} mnemosyne stats",
-            f"hermes -p {plan.options.profile} plugins list --plain --no-bundled",
+            f"{hermes_bin} -p {plan.options.profile} memory status",
+            f"{hermes_bin} -p {plan.options.profile} mnemosyne stats",
+            f"{hermes_bin} -p {plan.options.profile} plugins list --plain --no-bundled",
         ]
     for command in commands:
         run_command(command, dry_run=False)
 
 
 def apply_plan(plan: InstallPlan) -> None:
+    validate_runtime_options(plan.options)
     print_plan(plan)
     if not plan.options.yes:
         answer = input("\nApply this plan? [y/N] ").strip().lower()
@@ -723,6 +763,16 @@ def wizard(argv: Iterable[str] | None = None, *, env: os._Environ[str] | dict[st
     parser = argparse.ArgumentParser(description="Bootstrap Hermes LCM + Mnemosyne + progress-tail")
     parser.add_argument("--home", default=None)
     parser.add_argument(
+        "--hermes-bin",
+        default=_env_get(runtime_env, "HERMES_BIN", ""),
+        help="Hermes CLI executable. Defaults to PATH/discovery; env: HERMES_BIN.",
+    )
+    parser.add_argument(
+        "--hermes-python",
+        default=_env_get(runtime_env, "HERMES_STACK_PYTHON", ""),
+        help="Python executable for the Hermes runtime venv. Defaults to discovery; env: HERMES_STACK_PYTHON.",
+    )
+    parser.add_argument(
         "--profile",
         action="append",
         default=None,
@@ -808,12 +858,24 @@ def wizard(argv: Iterable[str] | None = None, *, env: os._Environ[str] | dict[st
     args = parser.parse_args(list(argv) if argv is not None else None)
     apply_full_online_embedding_env_defaults(args, runtime_env)
 
-    home = Path(args.home).expanduser() if args.home else detect_base_home()
+    home = Path(args.home).expanduser() if args.home else detect_base_home(args.hermes_bin or None)
+    runtime = discover_hermes_runtime(
+        base_home=home,
+        hermes_bin=args.hermes_bin,
+        hermes_python=args.hermes_python,
+        env=runtime_env,
+    )
     profiles = parse_profiles(args.profile)
     if not args.yes:
         print("Hermes Stack Bootstrap")
         print("Installs: hermes-lcm, Mnemosyne, hermes-progress-tail; optional skill packs are flag-gated.")
         home = Path(prompt_default("Hermes base path", str(home))).expanduser()
+        runtime = discover_hermes_runtime(
+            base_home=home,
+            hermes_bin=args.hermes_bin,
+            hermes_python=args.hermes_python,
+            env=runtime_env,
+        )
         if args.profile is None:
             profiles = parse_profiles(prompt_default("Target profile(s), comma-separated", "default"))
         args.mnemosyne_mode = prompt_default(
@@ -877,6 +939,10 @@ def wizard(argv: Iterable[str] | None = None, *, env: os._Environ[str] | dict[st
     return InstallerOptions(
         base_home=home,
         profile=profile,
+        hermes_bin=runtime.hermes_bin or args.hermes_bin or "hermes",
+        hermes_bin_source=runtime.hermes_bin_source,
+        hermes_python=runtime.hermes_python,
+        hermes_python_source=runtime.hermes_python_source,
         yes=args.yes,
         dry_run=args.dry_run,
         summary_model=args.summary_model,

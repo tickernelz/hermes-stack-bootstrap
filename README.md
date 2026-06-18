@@ -26,6 +26,8 @@ Dry run first:
 curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/main/install.sh | bash -s -- --dry-run
 ```
 
+`curl | bash` works in interactive mode: the shell wrapper reattaches Python prompts to `/dev/tty` when stdin is the curl pipe.
+
 Inspect first:
 
 ```bash
@@ -67,15 +69,52 @@ Existing files are backed up before non-dry-run writes.
 
 Hermes is **not restarted automatically**. Restart manually after reviewing the result.
 
-## Hermes home and profile detection
+## Hermes home, runtime, and profile detection
 
-The installer tries to find the Hermes base directory in this order:
+The installer keeps profile files separate from the Hermes runtime:
 
-1. `HERMES_HOME`
-2. `hermes config path`
-3. `~/.hermes`
+| Path | What it means | Typical examples |
+|---|---|---|
+| Hermes profile base | user-owned config/env/SOUL/profile tree | `~/.hermes`, `/home/lutfi22/.hermes` |
+| Hermes CLI | executable used for config discovery, verification, and SOUL generation | `hermes`, `/usr/local/bin/hermes`, `/srv/hermes/venv/bin/hermes` |
+| Hermes runtime Python | Python environment where Mnemosyne dependencies are installed | `~/.hermes/hermes-agent/venv/bin/python`, `/srv/shared/hermes/venv/bin/python` |
 
-Interactive mode lets you override the detected path manually.
+This supports shared servers where Hermes itself is installed globally while each user keeps a private profile under `~/.hermes`.
+
+Profile base detection order:
+
+1. `--home`
+2. `HERMES_HOME`
+3. `hermes config path` from the selected Hermes CLI
+4. `~/.hermes`
+
+Hermes CLI / runtime detection order:
+
+1. `--hermes-bin` / `HERMES_BIN` and `--hermes-python` / `HERMES_STACK_PYTHON`
+2. every executable named `hermes` in `$PATH`
+3. Python inferred from the selected Hermes executable's realpath/sibling venv or shebang
+4. profile-local `hermes-agent/venv/bin/python`
+5. bounded filesystem scan for executable files named `hermes`
+
+The filesystem scan is deliberately bounded and prunes pseudo/noisy trees such as `/proc`, `/sys`, `/dev`, `/run`, `/tmp`, `/mnt`, and `/media`. It searches for an executable named `hermes`; it does **not** assume `/opt` or any other fixed install directory.
+
+Interactive mode lets you override the detected profile base manually. For explicit shared-runtime installs:
+
+```bash
+HERMES_HOME=/home/lutfi22/.hermes \
+HERMES_BIN=/usr/local/bin/hermes \
+HERMES_STACK_PYTHON=/srv/shared/hermes/venv/bin/python \
+  bash install.sh
+```
+
+or:
+
+```bash
+bash install.sh \
+  --home /home/lutfi22/.hermes \
+  --hermes-bin /usr/local/bin/hermes \
+  --hermes-python /srv/shared/hermes/venv/bin/python
+```
 
 Named profiles are supported. For example, profile `work` maps to:
 
@@ -105,10 +144,19 @@ Run non-interactively against the detected Hermes home:
 bash install.sh --yes
 ```
 
-Target a custom Hermes home:
+Target a custom Hermes profile home:
 
 ```bash
-bash install.sh --home /opt/hermes
+bash install.sh --home /home/lutfi22/.hermes
+```
+
+Target a shared/global Hermes runtime explicitly:
+
+```bash
+bash install.sh \
+  --home /home/lutfi22/.hermes \
+  --hermes-bin /usr/local/bin/hermes \
+  --hermes-python /srv/shared/hermes/venv/bin/python
 ```
 
 Target one named profile:
@@ -264,6 +312,8 @@ platform_toolsets:
 Unrelated config keys are preserved.
 
 `platform_toolsets.telegram: [memory]` is included because Telegram sessions otherwise may not expose Mnemosyne's tools.
+
+If the discovered runtime Python is globally installed but not writable by the current user, ask the server admin to preinstall Mnemosyne into that runtime, run the installer with appropriate privileges, or use `--skip-mnemosyne` if Mnemosyne is already installed. The installer will not silently install Mnemosyne into an unrelated user Python because Hermes would not see it.
 
 ## SOUL.md generation
 
