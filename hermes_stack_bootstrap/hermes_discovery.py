@@ -65,6 +65,10 @@ def _is_executable(path: Path) -> bool:
         return False
 
 
+def _looks_like_python_executable(path: Path | str) -> bool:
+    return Path(path).name.startswith("python")
+
+
 def _dedupe_paths(paths: Iterable[Path]) -> list[Path]:
     seen: set[str] = set()
     result: list[Path] = []
@@ -117,6 +121,8 @@ def _resolve_env_utility_from_shebang_tokens(tokens: list[str], *, env: Mapping[
     if index >= len(tokens):
         return None
     executable_name = tokens[index]
+    if not _looks_like_python_executable(executable_name):
+        return None
     executable_path = Path(executable_name).expanduser()
     if executable_path.is_absolute() and _is_executable(executable_path):
         return executable_path.resolve()
@@ -167,7 +173,7 @@ def infer_python_from_hermes_bin(hermes_bin: str | Path, *, env: Mapping[str, st
         if Path(first_token).name == "env":
             return _python_from_env_shebang(target, env=env)
         candidate = Path(first_token)
-        if _is_executable(candidate):
+        if _looks_like_python_executable(candidate) and _is_executable(candidate):
             return candidate.resolve()
     return _python_from_env_shebang(target, env=env)
 

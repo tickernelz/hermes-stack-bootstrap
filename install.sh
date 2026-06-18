@@ -17,6 +17,13 @@ find_hermes_in_path() {
   command -v hermes 2>/dev/null || true
 }
 
+looks_like_python_executable() {
+  local path_or_name="${1:-}"
+  local base_name
+  base_name="$(basename "$path_or_name")"
+  [[ "$base_name" == python* ]]
+}
+
 resolve_from_path() {
   local executable_name="${1:-}"
   [[ -n "$executable_name" ]] || return 1
@@ -69,6 +76,7 @@ resolve_env_shebang_utility() {
 
   (( index < ${#parts[@]} )) || return 1
   local executable_name="${parts[$index]}"
+  looks_like_python_executable "$executable_name" || return 1
   if [[ "$executable_name" == /* && -x "$executable_name" && -f "$executable_name" ]]; then
     printf '%s\n' "$executable_name"
     return 0
@@ -106,7 +114,7 @@ infer_python_from_hermes_bin() {
         printf '%s\n' "$env_resolved"
         return 0
       fi
-    elif is_executable "$interpreter"; then
+    elif looks_like_python_executable "$interpreter" && is_executable "$interpreter"; then
       printf '%s\n' "$interpreter"
       return 0
     fi

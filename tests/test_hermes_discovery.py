@@ -69,6 +69,23 @@ class HermesDiscoveryTests(unittest.TestCase):
 
             self.assertEqual(infer_python_from_hermes_bin(hermes, env=env), python)
 
+    def test_infer_python_from_env_shebang_ignores_non_python_utility(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hermes = self.make_executable(root / "cli" / "hermes", "#!/usr/bin/env bash\necho ok\n")
+            bash = self.make_executable(root / "runtime" / "bash")
+            env = {"PATH": os.pathsep.join([str(hermes.parent), str(bash.parent)])}
+
+            self.assertIsNone(infer_python_from_hermes_bin(hermes, env=env))
+
+    def test_infer_python_from_absolute_shebang_ignores_non_python_interpreter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bash = self.make_executable(root / "runtime" / "bash")
+            hermes = self.make_executable(root / "cli" / "hermes", f"#!{bash}\necho ok\n")
+
+            self.assertIsNone(infer_python_from_hermes_bin(hermes))
+
     def test_bounded_filesystem_scan_finds_nested_hermes_without_opt_assumption(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
