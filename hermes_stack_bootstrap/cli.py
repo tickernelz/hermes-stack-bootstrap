@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import difflib
+import getpass
 import json
 import os
 import shutil
@@ -37,6 +38,7 @@ HMX_KNOWLEDGE_REPO = os.environ.get(
     "git@gitlab.com:hashmicro1/hmx/hmx-knowledge.git",
 )
 IMPECCABLE_REPO = "https://github.com/pbakaus/impeccable"
+SENSITIVE_ENV_KEYS = {"MNEMOSYNE_EMBEDDING_API_KEY"}
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,10 @@ class InstallerOptions:
     mnemosyne_mode: str = "full-local"
     mnemosyne_host_llm_provider: str = ""
     mnemosyne_host_llm_model: str = ""
+    mnemosyne_embedding_api_url: str = ""
+    mnemosyne_embedding_api_key: str = ""
+    mnemosyne_embedding_model: str = ""
+    mnemosyne_embedding_dim: str = ""
     skip_lcm: bool = False
     skip_mnemosyne: bool = False
     skip_progress_tail: bool = False
@@ -227,7 +233,7 @@ def build_plan(options: InstallerOptions) -> InstallPlan:
                 PlanStep(
                     f"Install Mnemosyne package for {options.mnemosyne_mode} mode into Hermes runtime venv",
                     f"{hermes_py} -m pip install --upgrade --no-cache-dir {mnemosyne_pip_packages(options.mnemosyne_mode)}",
-                    "full-local uses local embeddings + local GGUF LLM; hybrid uses local embeddings + Hermes host LLM; full-online leaves embedding endpoint/model to the user and routes LLM via Hermes.",
+                    "full-local uses local embeddings + local GGUF LLM; hybrid uses local embeddings + Hermes host LLM; full-online uses user-supplied embedding API settings and routes LLM via Hermes.",
                 ),
                 PlanStep(
                     "Register Mnemosyne as Hermes memory provider",
@@ -295,8 +301,8 @@ def build_plan(options: InstallerOptions) -> InstallPlan:
                 notes="Enable hermes-lcm + mnemosyne, set context.engine=lcm, disable built-in file memory.",
             ),
             PlanStep(
-                "Merge .env non-secret defaults",
-                notes="Write LCM tuning and selected Mnemosyne mode defaults. No API keys are added.",
+                "Merge .env values",
+                notes="Write LCM tuning, selected Mnemosyne mode defaults, and any embedding API values explicitly supplied during install.",
             ),
             PlanStep(
                 "Verify",
@@ -447,6 +453,10 @@ def merge_config_and_env(plan: InstallPlan) -> None:
         mnemosyne_mode=plan.options.mnemosyne_mode,
         mnemosyne_host_llm_provider=plan.options.mnemosyne_host_llm_provider,
         mnemosyne_host_llm_model=plan.options.mnemosyne_host_llm_model,
+        mnemosyne_embedding_api_url=plan.options.mnemosyne_embedding_api_url,
+        mnemosyne_embedding_api_key=plan.options.mnemosyne_embedding_api_key,
+        mnemosyne_embedding_model=plan.options.mnemosyne_embedding_model,
+        mnemosyne_embedding_dim=plan.options.mnemosyne_embedding_dim,
     )
 
     if plan.options.dry_run:
@@ -462,7 +472,7 @@ def merge_config_and_env(plan: InstallPlan) -> None:
         except Exception:
             print(merged_config)
         print("\n--- .env additions/updates preview ---")
-        print(render_env_block(env_values), end="")
+        print(render_env_block(env_values, redact_keys=SENSITIVE_ENV_KEYS), end="")
         return
 
     plan.target_home.mkdir(parents=True, exist_ok=True)
@@ -528,7 +538,46 @@ def prompt_default(prompt: str, default: str) -> str:
     return value or default
 
 
-def wizard(argv: Iterable[str] | None = None) -> InstallerOptions:
+def _env_get(env: os._Environ[str] | dict[str, str], key: str, default: str = "") -> str:
+    value = env.get(key, default)
+    return value if value is not None else default
+
+
+def validate_embedding_options(
+    *,
+    mode: str,
+    api_url: str,
+    api_key: str,
+    model: str,
+    dim: str,
+) -> None:
+    supplied = [api_url, api_key, model, dim]
+    if any(supplied) and mode != "full-online":
+        raise ValueError("Mnemosyne embedding API settings require --mnemosyne-mode full-online")
+    if mode == "full-online" and any(supplied):
+        if not api_url:
+            raise ValueError("full-online embedding API config requires --mnemosyne-embedding-api-url")
+        if not model:
+            raise ValueError("full-online embedding API config requires --mnemosyne-embedding-model")
+        if not dim:
+            raise ValueError("full-online embedding API config requires --mnemosyne-embedding-dim")
+
+
+def apply_full_online_embedding_env_defaults(args: argparse.Namespace, env: os._Environ[str] | dict[str, str]) -> None:
+    if args.mnemosyne_mode != "full-online":
+        return
+    if not args.mnemosyne_embedding_api_url:
+        args.mnemosyne_embedding_api_url = _env_get(env, "MNEMOSYNE_EMBEDDING_API_URL", "")
+    if not args.mnemosyne_embedding_api_key:
+        args.mnemosyne_embedding_api_key = _env_get(env, "MNEMOSYNE_EMBEDDING_API_KEY", "")
+    if not args.mnemosyne_embedding_model:
+        args.mnemosyne_embedding_model = _env_get(env, "MNEMOSYNE_EMBEDDING_MODEL", "")
+    if not args.mnemosyne_embedding_dim:
+        args.mnemosyne_embedding_dim = _env_get(env, "MNEMOSYNE_EMBEDDING_DIM", "")
+
+
+def wizard(argv: Iterable[str] | None = None, *, env: os._Environ[str] | dict[str, str] | None = None) -> InstallerOptions:
+    runtime_env = os.environ if env is None else env
     parser = argparse.ArgumentParser(description="Bootstrap Hermes LCM + Mnemosyne + progress-tail")
     parser.add_argument("--home", default=None)
     parser.add_argument(
@@ -544,30 +593,46 @@ def wizard(argv: Iterable[str] | None = None) -> InstallerOptions:
     )
     parser.add_argument(
         "--lcm-summary-model",
-        default=os.environ.get("HERMES_STACK_LCM_SUMMARY_MODEL", DEFAULT_LCM_SUMMARY_MODEL),
+        default=_env_get(runtime_env, "HERMES_STACK_LCM_SUMMARY_MODEL", DEFAULT_LCM_SUMMARY_MODEL),
         help="LCM summarization model using a Hermes provider/model name. Empty uses Hermes auxiliary.compression.",
     )
     parser.add_argument(
         "--lcm-expansion-model",
-        default=os.environ.get("HERMES_STACK_LCM_EXPANSION_MODEL", ""),
+        default=_env_get(runtime_env, "HERMES_STACK_LCM_EXPANSION_MODEL", ""),
         help="LCM lcm_expand_query synthesis model. Empty falls back to summary model or Hermes auxiliary.",
     )
     parser.add_argument(
         "--mnemosyne-mode",
         choices=MNEMOSYNE_MODES,
-        default=os.environ.get("HERMES_STACK_MNEMOSYNE_MODE", "full-local"),
+        default=_env_get(runtime_env, "HERMES_STACK_MNEMOSYNE_MODE", "full-local"),
         help="full-local=local embeddings+local GGUF LLM; hybrid=local embeddings+Hermes LLM; full-online=Hermes LLM+user-managed embedding endpoint/model.",
     )
     parser.add_argument(
         "--mnemosyne-llm-provider",
-        default=os.environ.get("HERMES_STACK_MNEMOSYNE_LLM_PROVIDER", ""),
+        default=_env_get(runtime_env, "HERMES_STACK_MNEMOSYNE_LLM_PROVIDER", ""),
         help="Optional Hermes provider override for Mnemosyne host LLM in hybrid/full-online modes.",
     )
     parser.add_argument(
         "--mnemosyne-llm-model",
-        default=os.environ.get("HERMES_STACK_MNEMOSYNE_LLM_MODEL", ""),
+        default=_env_get(runtime_env, "HERMES_STACK_MNEMOSYNE_LLM_MODEL", ""),
         help="Optional Hermes model override for Mnemosyne host LLM in hybrid/full-online modes.",
     )
+    parser.add_argument(
+        "--mnemosyne-embedding-api-url",
+        default="",
+        help="Full-online embedding API endpoint. API key is read from prompt or MNEMOSYNE_EMBEDDING_API_KEY, not from a CLI flag.",
+    )
+    parser.add_argument(
+        "--mnemosyne-embedding-model",
+        default="",
+        help="Full-online embedding model name, e.g. text-embedding-3-small.",
+    )
+    parser.add_argument(
+        "--mnemosyne-embedding-dim",
+        default="",
+        help="Full-online embedding vector dimension, e.g. 1536.",
+    )
+    parser.set_defaults(mnemosyne_embedding_api_key="")
     parser.add_argument("--yes", "-y", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--skip-lcm", action="store_true")
@@ -575,7 +640,7 @@ def wizard(argv: Iterable[str] | None = None) -> InstallerOptions:
     parser.add_argument("--skip-progress-tail", action="store_true")
     parser.add_argument(
         "--progress-tail-ref",
-        default=os.environ.get("HERMES_STACK_PROGRESS_TAIL_REF", PROGRESS_TAIL_REF),
+        default=_env_get(runtime_env, "HERMES_STACK_PROGRESS_TAIL_REF", PROGRESS_TAIL_REF),
         help="hermes-progress-tail git ref or 'latest' to resolve the newest GitHub release",
     )
     parser.add_argument("--install-superpowers", action="store_true")
@@ -583,10 +648,11 @@ def wizard(argv: Iterable[str] | None = None) -> InstallerOptions:
     parser.add_argument("--install-impeccable", action="store_true")
     parser.add_argument(
         "--hmx-knowledge-url",
-        default=os.environ.get("HMX_KNOWLEDGE_GIT_URL", HMX_KNOWLEDGE_REPO),
+        default=_env_get(runtime_env, "HMX_KNOWLEDGE_GIT_URL", HMX_KNOWLEDGE_REPO),
         help="Private HMX knowledge repo URL. Prefer SSH or a git credential helper; do not put tokens in shell history.",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
+    apply_full_online_embedding_env_defaults(args, runtime_env)
 
     home = Path(args.home).expanduser() if args.home else detect_base_home()
     profiles = parse_profiles(args.profile)
@@ -601,6 +667,7 @@ def wizard(argv: Iterable[str] | None = None) -> InstallerOptions:
         ).strip().lower()
         if args.mnemosyne_mode not in MNEMOSYNE_MODES:
             raise ValueError(f"Unknown Mnemosyne mode: {args.mnemosyne_mode}")
+        apply_full_online_embedding_env_defaults(args, runtime_env)
         if args.mnemosyne_mode in {"hybrid", "full-online"}:
             args.mnemosyne_llm_provider = prompt_default(
                 "Mnemosyne Hermes LLM provider override (empty = Hermes auxiliary/default)",
@@ -610,6 +677,22 @@ def wizard(argv: Iterable[str] | None = None) -> InstallerOptions:
                 "Mnemosyne Hermes LLM model override (empty = Hermes auxiliary/default)",
                 args.mnemosyne_llm_model,
             )
+        if args.mnemosyne_mode == "full-online":
+            args.mnemosyne_embedding_api_url = prompt_default(
+                "Mnemosyne embedding API URL (empty = configure later)",
+                args.mnemosyne_embedding_api_url,
+            )
+            if args.mnemosyne_embedding_api_url:
+                if not args.mnemosyne_embedding_api_key:
+                    args.mnemosyne_embedding_api_key = getpass.getpass(
+                        "Mnemosyne embedding API key (hidden; empty if endpoint needs no key): "
+                    ).strip()
+                args.mnemosyne_embedding_model = prompt_default(
+                    "Mnemosyne embedding model", args.mnemosyne_embedding_model
+                )
+                args.mnemosyne_embedding_dim = prompt_default(
+                    "Mnemosyne embedding dimension", args.mnemosyne_embedding_dim
+                )
         if not args.summary_model:
             args.lcm_summary_model = prompt_default(
                 "LCM summary model (empty = Hermes auxiliary.compression)",
@@ -624,6 +707,13 @@ def wizard(argv: Iterable[str] | None = None) -> InstallerOptions:
         if not args.lcm_expansion_model:
             args.lcm_expansion_model = args.summary_model
     profile = ",".join(profiles)
+    validate_embedding_options(
+        mode=args.mnemosyne_mode,
+        api_url=args.mnemosyne_embedding_api_url,
+        api_key=args.mnemosyne_embedding_api_key,
+        model=args.mnemosyne_embedding_model,
+        dim=args.mnemosyne_embedding_dim,
+    )
 
     return InstallerOptions(
         base_home=home,
@@ -636,6 +726,10 @@ def wizard(argv: Iterable[str] | None = None) -> InstallerOptions:
         mnemosyne_mode=args.mnemosyne_mode,
         mnemosyne_host_llm_provider=args.mnemosyne_llm_provider,
         mnemosyne_host_llm_model=args.mnemosyne_llm_model,
+        mnemosyne_embedding_api_url=args.mnemosyne_embedding_api_url,
+        mnemosyne_embedding_api_key=args.mnemosyne_embedding_api_key,
+        mnemosyne_embedding_model=args.mnemosyne_embedding_model,
+        mnemosyne_embedding_dim=args.mnemosyne_embedding_dim,
         skip_lcm=args.skip_lcm,
         skip_mnemosyne=args.skip_mnemosyne,
         skip_progress_tail=args.skip_progress_tail,

@@ -1,3 +1,4 @@
+import io
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -9,6 +10,7 @@ from hermes_stack_bootstrap.cli import (
     build_plan,
     build_plans,
     parse_profiles,
+    print_plan,
     wizard,
 )
 
@@ -161,6 +163,86 @@ class CliPlanTests(unittest.TestCase):
         self.assertEqual(options.mnemosyne_host_llm_model, "anthropic/claude-sonnet-4")
         self.assertEqual(options.lcm_summary_model, "openrouter/google/gemini-2.5-flash")
         self.assertEqual(options.lcm_expansion_model, "openrouter/anthropic/claude-sonnet-4")
+
+    def test_wizard_accepts_full_online_embedding_options_from_environment(self):
+        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
+            options = wizard(
+                [
+                    "--yes",
+                    "--mnemosyne-mode",
+                    "full-online",
+                ],
+                env={
+                    "MNEMOSYNE_EMBEDDING_API_URL": "https://embeddings.example/v1",
+                    "MNEMOSYNE_EMBEDDING_API_KEY": "secret-from-env",
+                    "MNEMOSYNE_EMBEDDING_MODEL": "text-embedding-3-small",
+                    "MNEMOSYNE_EMBEDDING_DIM": "1536",
+                },
+            )
+
+        self.assertEqual(options.mnemosyne_mode, "full-online")
+        self.assertEqual(options.mnemosyne_embedding_api_url, "https://embeddings.example/v1")
+        self.assertEqual(options.mnemosyne_embedding_api_key, "secret-from-env")
+        self.assertEqual(options.mnemosyne_embedding_model, "text-embedding-3-small")
+        self.assertEqual(options.mnemosyne_embedding_dim, "1536")
+
+    def test_wizard_prompts_for_full_online_embedding_api_key_without_echo(self):
+        with (
+            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
+            patch(
+                "builtins.input",
+                side_effect=[
+                    "",
+                    "",
+                    "full-online",
+                    "openrouter",
+                    "gpt-5.1-mini",
+                    "https://embeddings.example/v1",
+                    "text-embedding-3-small",
+                    "1536",
+                    "",
+                    "",
+                ],
+            ),
+            patch("getpass.getpass", return_value="secret-from-prompt") as getpass_mock,
+        ):
+            options = wizard([], env={})
+
+        getpass_mock.assert_called_once()
+        self.assertEqual(options.mnemosyne_embedding_api_url, "https://embeddings.example/v1")
+        self.assertEqual(options.mnemosyne_embedding_api_key, "secret-from-prompt")
+        self.assertEqual(options.mnemosyne_embedding_model, "text-embedding-3-small")
+        self.assertEqual(options.mnemosyne_embedding_dim, "1536")
+
+    def test_wizard_rejects_partial_full_online_embedding_config(self):
+        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
+            with self.assertRaisesRegex(ValueError, "requires --mnemosyne-embedding-api-url"):
+                wizard(
+                    [
+                        "--yes",
+                        "--mnemosyne-mode",
+                        "full-online",
+                    ],
+                    env={"MNEMOSYNE_EMBEDDING_API_KEY": "secret-without-url"},
+                )
+
+    def test_plan_output_never_prints_embedding_api_key_value(self):
+        options = InstallerOptions(
+            base_home=Path("/tmp/hermes"),
+            profile="default",
+            yes=True,
+            dry_run=True,
+            mnemosyne_mode="full-online",
+            mnemosyne_embedding_api_key="do-not-print-this-secret",
+        )
+        plan = build_plan(options)
+        buffer = io.StringIO()
+
+        with patch("sys.stdout", buffer):
+            print_plan(plan)
+
+        output = buffer.getvalue()
+        self.assertNotIn("do-not-print-this-secret", output)
 
     def test_build_plan_targets_named_profile_for_progress_tail(self):
         options = InstallerOptions(

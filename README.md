@@ -56,9 +56,10 @@ It only merges a small, reviewable set of config/env values:
 - switches context engine to LCM
 - configures Mnemosyne as the memory provider
 - exposes the `memory` toolset on Telegram so Mnemosyne tools are available there
-- writes non-secret LCM and Mnemosyne defaults for the selected mode
+- writes LCM/Mnemosyne defaults for the selected mode
+- writes Mnemosyne embedding API credentials only when the user supplies them during the install run
 
-It does **not** write tokens, passwords, private keys, provider API keys, Telegram bot tokens, dashboard secrets, private endpoint credentials, or Mnemosyne embedding API credentials.
+It does **not** write tokens, passwords, private keys, provider API keys, Telegram bot tokens, dashboard secrets, private endpoint credentials, or Mnemosyne embedding API credentials unless the user explicitly provides them to the installer.
 
 Existing files are backed up before non-dry-run writes.
 
@@ -143,10 +144,22 @@ bash install.sh --mnemosyne-mode hybrid \
   --mnemosyne-llm-provider openrouter \
   --mnemosyne-llm-model anthropic/claude-sonnet-4
 
-# Full online: Hermes provider/model for Mnemosyne LLM; embedding endpoint/model is yours to configure
+# Full online: Hermes provider/model for Mnemosyne LLM; installer also asks for embedding API URL/key/model/dim in interactive mode
 bash install.sh --mnemosyne-mode full-online \
   --mnemosyne-llm-provider openrouter \
   --mnemosyne-llm-model anthropic/claude-sonnet-4
+```
+
+For non-interactive full-online installs, put the embedding API key in the environment rather than a CLI flag:
+
+```bash
+MNEMOSYNE_EMBEDDING_API_URL=https://your-embedding-endpoint/v1 \
+MNEMOSYNE_EMBEDDING_API_KEY=... \
+MNEMOSYNE_EMBEDDING_MODEL=text-embedding-3-small \
+MNEMOSYNE_EMBEDDING_DIM=1536 \
+  bash install.sh --yes --mnemosyne-mode full-online \
+    --mnemosyne-llm-provider openrouter \
+    --mnemosyne-llm-model anthropic/claude-sonnet-4
 ```
 
 Pin a specific progress-tail release instead of the latest release:
@@ -222,7 +235,7 @@ Unrelated config keys are preserved.
 
 ## Environment defaults
 
-The installer writes non-secret defaults to the selected profile's `.env`.
+It writes the selected profile's `.env` during the same install run. For secrets, prefer the interactive wizard: it prompts with hidden input so API keys do not land in shell history. In non-interactive mode, pass secrets through environment variables, not CLI flags.
 
 ### LCM
 
@@ -248,7 +261,7 @@ The wizard exposes three modes:
 |---|---|---|---|
 | `full-local` | local fastembed | local MiniCPM5 GGUF | `mnemosyne-memory[all] sqlite-vec` |
 | `hybrid` | local fastembed | Hermes host LLM provider/model | `mnemosyne-memory[embeddings] sqlite-vec` |
-| `full-online` | user-managed API/model | Hermes host LLM provider/model | `mnemosyne-memory sqlite-vec numpy` |
+| `full-online` | embedding API/model captured during install or from env | Hermes host LLM provider/model | `mnemosyne-memory sqlite-vec numpy` |
 
 #### `full-local` env
 
@@ -299,19 +312,16 @@ MNEMOSYNE_HOST_LLM_N_CTX=32000
 # Optional when supplied:
 MNEMOSYNE_HOST_LLM_PROVIDER=<hermes-provider>
 MNEMOSYNE_HOST_LLM_MODEL=<hermes-model>
-```
-
-For `full-online`, configure your own Mnemosyne embedding endpoint/model after install, for example:
-
-```env
+MNEMOSYNE_EMBEDDINGS_VIA_API=true
 MNEMOSYNE_EMBEDDING_API_URL=https://your-embedding-endpoint/v1
 MNEMOSYNE_EMBEDDING_API_KEY=...
 MNEMOSYNE_EMBEDDING_MODEL=text-embedding-3-small
 MNEMOSYNE_EMBEDDING_DIM=1536
-MNEMOSYNE_EMBEDDINGS_VIA_API=true
 ```
 
-The installer intentionally does not write embedding API URLs or keys. When switching modes, it removes stale bootstrapper-managed keys such as `MNEMOSYNE_FORCE_LOCAL`, `MNEMOSYNE_LLM_REPO`, or `MNEMOSYNE_HOST_LLM_ENABLED`; it preserves API keys/endpoints and non-default embedding model/dimension values you added yourself.
+For `full-online`, the interactive installer prompts for embedding API URL, hidden API key, model, and dimension in the same run. Non-interactive installs can set those via `MNEMOSYNE_EMBEDDING_API_URL`, `MNEMOSYNE_EMBEDDING_API_KEY`, `MNEMOSYNE_EMBEDDING_MODEL`, and `MNEMOSYNE_EMBEDDING_DIM` before calling `bash install.sh --yes --mnemosyne-mode full-online`.
+
+The installer does not accept API keys as CLI flags because that leaks into shell history/process lists. Dry-run previews redact `MNEMOSYNE_EMBEDDING_API_KEY`. When switching modes, it removes stale bootstrapper-managed keys such as `MNEMOSYNE_FORCE_LOCAL`, `MNEMOSYNE_LLM_REPO`, or `MNEMOSYNE_HOST_LLM_ENABLED`; it preserves API keys/endpoints and non-default embedding model/dimension values you added yourself while staying in `full-online`.
 
 ## After install
 

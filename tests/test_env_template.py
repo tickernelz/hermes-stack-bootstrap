@@ -73,6 +73,39 @@ class EnvTemplateTests(unittest.TestCase):
         self.assertNotIn("MNEMOSYNE_FORCE_LOCAL", values)
         self.assertNotIn("MNEMOSYNE_LLM_REPO", values)
 
+    def test_build_env_values_full_online_can_write_user_supplied_embedding_config(self):
+        values = build_env_values(
+            home="/tmp/hermes",
+            mnemosyne_mode="full-online",
+            mnemosyne_embedding_api_url="https://embeddings.example/v1",
+            mnemosyne_embedding_api_key="secret-from-prompt",
+            mnemosyne_embedding_model="text-embedding-3-small",
+            mnemosyne_embedding_dim="1536",
+        )
+
+        self.assertEqual(values["MNEMOSYNE_EMBEDDING_API_URL"], "https://embeddings.example/v1")
+        self.assertEqual(values["MNEMOSYNE_EMBEDDING_API_KEY"], "secret-from-prompt")
+        self.assertEqual(values["MNEMOSYNE_EMBEDDING_MODEL"], "text-embedding-3-small")
+        self.assertEqual(values["MNEMOSYNE_EMBEDDING_DIM"], "1536")
+        self.assertEqual(values["MNEMOSYNE_EMBEDDINGS_VIA_API"], "true")
+        self.assertNotIn("MNEMOSYNE_FORCE_LOCAL", values)
+
+    def test_build_env_values_hybrid_rejects_embedding_api_credentials(self):
+        with self.assertRaisesRegex(ValueError, "Embedding API settings are only valid"):
+            build_env_values(
+                home="/tmp/hermes",
+                mnemosyne_mode="hybrid",
+                mnemosyne_embedding_api_key="should-not-be-used",
+            )
+
+    def test_build_env_values_rejects_partial_online_embedding_config(self):
+        with self.assertRaisesRegex(ValueError, "requires MNEMOSYNE_EMBEDDING_API_URL"):
+            build_env_values(
+                home="/tmp/hermes",
+                mnemosyne_mode="full-online",
+                mnemosyne_embedding_api_key="secret-without-endpoint",
+            )
+
     def test_build_env_values_accepts_lcm_model_overrides(self):
         values = build_env_values(
             home="/tmp/hermes",
@@ -93,6 +126,19 @@ class EnvTemplateTests(unittest.TestCase):
         block = render_env_block({"B": "two words", "A": "1"})
 
         self.assertEqual(block, 'A=1\nB="two words"\n')
+
+    def test_render_env_block_can_redact_sensitive_values(self):
+        block = render_env_block(
+            {
+                "MNEMOSYNE_EMBEDDING_API_KEY": "do-not-print",
+                "MNEMOSYNE_EMBEDDING_API_URL": "https://embeddings.example/v1",
+            },
+            redact_keys={"MNEMOSYNE_EMBEDDING_API_KEY"},
+        )
+
+        self.assertIn('MNEMOSYNE_EMBEDDING_API_KEY="<redacted>"', block)
+        self.assertNotIn("do-not-print", block)
+        self.assertIn("MNEMOSYNE_EMBEDDING_API_URL=https://embeddings.example/v1", block)
 
     def test_merge_env_text_removes_managed_keys_that_are_not_in_selected_mode(self):
         existing = "\n".join(

@@ -60,6 +60,14 @@ HOST_LLM_ENV = {
     "MNEMOSYNE_HOST_LLM_N_CTX": "32000",
 }
 
+ONLINE_EMBEDDING_ENV_KEYS = frozenset(
+    {
+        "MNEMOSYNE_EMBEDDINGS_VIA_API",
+        "MNEMOSYNE_EMBEDDING_API_URL",
+        "MNEMOSYNE_EMBEDDING_API_KEY",
+    }
+)
+
 MNEMOSYNE_MODES = ("full-local", "hybrid", "full-online")
 
 # Keys this bootstrapper owns. Used so switching modes removes stale managed keys
@@ -71,6 +79,7 @@ MANAGED_MNEMOSYNE_ENV_KEYS = frozenset(
         *LOCAL_EMBEDDING_ENV,
         *LOCAL_LLM_ENV,
         *HOST_LLM_ENV,
+        *ONLINE_EMBEDDING_ENV_KEYS,
         "MNEMOSYNE_HOST_LLM_PROVIDER",
         "MNEMOSYNE_HOST_LLM_MODEL",
     }
@@ -86,20 +95,43 @@ def build_env_values(
     mnemosyne_mode: str = "full-local",
     mnemosyne_host_llm_provider: str = "",
     mnemosyne_host_llm_model: str = "",
+    mnemosyne_embedding_api_url: str = "",
+    mnemosyne_embedding_api_key: str = "",
+    mnemosyne_embedding_model: str = "",
+    mnemosyne_embedding_dim: str = "",
     mnemosyne_data_dir: str = "",
 ) -> dict[str, str]:
-    """Build non-secret env defaults for LCM + Mnemosyne.
+    """Build env values for LCM + Mnemosyne.
 
     Mnemosyne modes:
     - full-local: local fastembed + local GGUF consolidation.
     - hybrid: local fastembed + Hermes host LLM provider/model.
-    - full-online: Hermes host LLM; embedding endpoint/model is user-managed.
+    - full-online: Hermes host LLM plus optional user-supplied embedding API settings.
 
-    Remote API keys and embedding endpoint secrets are deliberately never written.
+    API keys are only included when explicitly supplied by the installer prompt or environment.
     """
     mode = mnemosyne_mode.strip().lower() or "full-local"
     if mode not in MNEMOSYNE_MODES:
         raise ValueError(f"Unknown Mnemosyne mode: {mnemosyne_mode}")
+
+    embedding_values = {
+        "mnemosyne_embedding_api_url": mnemosyne_embedding_api_url.strip(),
+        "mnemosyne_embedding_api_key": mnemosyne_embedding_api_key.strip(),
+        "mnemosyne_embedding_model": mnemosyne_embedding_model.strip(),
+        "mnemosyne_embedding_dim": mnemosyne_embedding_dim.strip(),
+    }
+    supplied_embedding_values = {key: value for key, value in embedding_values.items() if value}
+    if supplied_embedding_values and mode != "full-online":
+        raise ValueError("Embedding API settings are only valid with mnemosyne_mode='full-online'")
+    if mode == "full-online" and supplied_embedding_values:
+        required = {
+            "mnemosyne_embedding_api_url": "MNEMOSYNE_EMBEDDING_API_URL",
+            "mnemosyne_embedding_model": "MNEMOSYNE_EMBEDDING_MODEL",
+            "mnemosyne_embedding_dim": "MNEMOSYNE_EMBEDDING_DIM",
+        }
+        for key, env_name in required.items():
+            if not embedding_values[key]:
+                raise ValueError(f"full-online embedding API config requires {env_name}")
 
     values: dict[str, str] = {}
     values.update(DEFAULT_LCM_ENV)
@@ -126,6 +158,13 @@ def build_env_values(
             values["MNEMOSYNE_HOST_LLM_PROVIDER"] = mnemosyne_host_llm_provider
         if mnemosyne_host_llm_model:
             values["MNEMOSYNE_HOST_LLM_MODEL"] = mnemosyne_host_llm_model
+        if supplied_embedding_values:
+            values["MNEMOSYNE_EMBEDDINGS_VIA_API"] = "true"
+            values["MNEMOSYNE_EMBEDDING_API_URL"] = embedding_values["mnemosyne_embedding_api_url"]
+            if embedding_values["mnemosyne_embedding_api_key"]:
+                values["MNEMOSYNE_EMBEDDING_API_KEY"] = embedding_values["mnemosyne_embedding_api_key"]
+            values["MNEMOSYNE_EMBEDDING_MODEL"] = embedding_values["mnemosyne_embedding_model"]
+            values["MNEMOSYNE_EMBEDDING_DIM"] = embedding_values["mnemosyne_embedding_dim"]
 
     values["MNEMOSYNE_DATA_DIR"] = mnemosyne_data_dir or str(
         Path(home).expanduser() / "mnemosyne" / "data"
@@ -147,8 +186,13 @@ def quote_env_value(value: str) -> str:
     return f'"{escaped}"'
 
 
-def render_env_block(values: Mapping[str, str]) -> str:
-    return "".join(f"{key}={quote_env_value(str(values[key]))}\n" for key in sorted(values))
+def render_env_block(values: Mapping[str, str], *, redact_keys: set[str] | None = None) -> str:
+    redacted = set(redact_keys or set())
+    lines: list[str] = []
+    for key in sorted(values):
+        value = "<redacted>" if key in redacted and values[key] else str(values[key])
+        lines.append(f"{key}={quote_env_value(value)}\n")
+    return "".join(lines)
 
 
 def managed_env_keys() -> set[str]:
@@ -162,9 +206,11 @@ def _unquote_env_value(raw_value: str) -> str:
     return value
 
 
-def _should_drop_stale_managed_key(key: str, raw_value: str) -> bool:
+def _should_drop_stale_managed_key(key: str, raw_value: str, selected_values: Mapping[str, str]) -> bool:
     if key in LOCAL_EMBEDDING_ENV:
         return _unquote_env_value(raw_value) == LOCAL_EMBEDDING_ENV[key]
+    if key in ONLINE_EMBEDDING_ENV_KEYS:
+        return any(local_key in selected_values for local_key in LOCAL_EMBEDDING_ENV)
     return True
 
 
@@ -193,7 +239,7 @@ def merge_env_text(
                 output.append(f"{key}={quote_env_value(str(values[key]))}")
                 seen.add(key)
                 continue
-            if key in all_managed and _should_drop_stale_managed_key(key, raw_value):
+            if key in all_managed and _should_drop_stale_managed_key(key, raw_value, values):
                 continue
         output.append(line)
     missing = [key for key in sorted(managed) if key not in seen]
