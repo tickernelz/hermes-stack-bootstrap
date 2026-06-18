@@ -49,6 +49,26 @@ class HermesDiscoveryTests(unittest.TestCase):
 
             self.assertEqual(infer_python_from_hermes_bin(hermes), python)
 
+    def test_infer_python_from_env_shebang_uses_python_not_env_binary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli_bin = root / "cli-bin"
+            runtime_bin = root / "runtime-bin"
+            hermes = self.make_executable(cli_bin / "hermes", "#!/usr/bin/env python3\nprint('ok')\n")
+            python = self.make_executable(runtime_bin / "python3")
+            env = {"PATH": os.pathsep.join([str(cli_bin), str(runtime_bin)])}
+
+            self.assertEqual(infer_python_from_hermes_bin(hermes, env=env), python)
+
+    def test_infer_python_from_env_shebang_supports_env_s_option(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            hermes = self.make_executable(root / "cli" / "hermes", "#!/usr/bin/env -S python3 -u\nprint('ok')\n")
+            python = self.make_executable(root / "runtime" / "python3")
+            env = {"PATH": os.pathsep.join([str(hermes.parent), str(python.parent)])}
+
+            self.assertEqual(infer_python_from_hermes_bin(hermes, env=env), python)
+
     def test_bounded_filesystem_scan_finds_nested_hermes_without_opt_assumption(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

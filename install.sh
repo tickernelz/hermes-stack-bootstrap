@@ -17,6 +17,65 @@ find_hermes_in_path() {
   command -v hermes 2>/dev/null || true
 }
 
+resolve_from_path() {
+  local executable_name="${1:-}"
+  [[ -n "$executable_name" ]] || return 1
+  local old_ifs="$IFS"
+  local path_dir
+  IFS=':'
+  for path_dir in $PATH; do
+    [[ -n "$path_dir" ]] || continue
+    if is_executable "$path_dir/$executable_name"; then
+      IFS="$old_ifs"
+      printf '%s\n' "$path_dir/$executable_name"
+      return 0
+    fi
+  done
+  IFS="$old_ifs"
+  return 1
+}
+
+resolve_env_shebang_utility() {
+  local target="${1:-}"
+  read -r -a parts <<< "$target"
+  [[ ${#parts[@]} -ge 2 ]] || return 1
+  [[ "$(basename "${parts[0]}")" == "env" ]] || return 1
+
+  local index=1
+  while (( index < ${#parts[@]} )); do
+    local token="${parts[$index]}"
+    if [[ "$token" == "--" ]]; then
+      ((index++))
+      break
+    fi
+    if [[ "$token" == "-S" ]]; then
+      ((index++))
+      break
+    fi
+    if [[ "$token" == "-u" || "$token" == "-C" || "$token" == "-P" ]]; then
+      ((index += 2))
+      continue
+    fi
+    if [[ "$token" == -* ]]; then
+      ((index++))
+      continue
+    fi
+    if [[ "$token" == *=* && "$token" != /* ]]; then
+      ((index++))
+      continue
+    fi
+    break
+  done
+
+  (( index < ${#parts[@]} )) || return 1
+  local executable_name="${parts[$index]}"
+  if [[ "$executable_name" == /* && -x "$executable_name" && -f "$executable_name" ]]; then
+    printf '%s\n' "$executable_name"
+    return 0
+  fi
+  resolve_from_path "$executable_name"
+}
+
 infer_python_from_hermes_bin() {
   local hermes_bin="${1:-}"
   [[ -n "$hermes_bin" ]] || return 1
@@ -38,9 +97,16 @@ infer_python_from_hermes_bin() {
   local shebang
   shebang="$(head -n 1 "$real_bin" 2>/dev/null || true)"
   if [[ "$shebang" == '#!'/* ]]; then
-    local interpreter="${shebang#\#!}"
-    interpreter="${interpreter%% *}"
-    if is_executable "$interpreter"; then
+    local target="${shebang#\#!}"
+    local interpreter="${target%% *}"
+    if [[ "$(basename "$interpreter")" == "env" ]]; then
+      local env_resolved
+      env_resolved="$(resolve_env_shebang_utility "$target" || true)"
+      if [[ -n "$env_resolved" ]]; then
+        printf '%s\n' "$env_resolved"
+        return 0
+      fi
+    elif is_executable "$interpreter"; then
       printf '%s\n' "$interpreter"
       return 0
     fi

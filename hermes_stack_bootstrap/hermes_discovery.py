@@ -93,19 +93,48 @@ def find_hermes_bins_from_path(*, env: Mapping[str, str] | None = None) -> list[
     return _dedupe_paths(candidates)
 
 
-def _python_from_env_shebang(target: str, *, env: Mapping[str, str] | None = None) -> Path | None:
-    runtime_env = os.environ if env is None else env
-    parts = target.split()
-    if len(parts) < 2 or not parts[0].endswith("env"):
+def _resolve_env_utility_from_shebang_tokens(tokens: list[str], *, env: Mapping[str, str]) -> Path | None:
+    index = 1
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            index += 1
+            break
+        if token == "-S":
+            index += 1
+            break
+        if token in {"-u", "-C", "-P"}:
+            index += 2
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        if "=" in token and not token.startswith("/"):
+            index += 1
+            continue
+        break
+
+    if index >= len(tokens):
         return None
-    executable_name = parts[1]
-    for raw_dir in runtime_env.get("PATH", "").split(os.pathsep):
+    executable_name = tokens[index]
+    executable_path = Path(executable_name).expanduser()
+    if executable_path.is_absolute() and _is_executable(executable_path):
+        return executable_path.resolve()
+    for raw_dir in env.get("PATH", "").split(os.pathsep):
         if not raw_dir:
             continue
         candidate = Path(raw_dir).expanduser() / executable_name
         if _is_executable(candidate):
             return candidate.resolve()
     return None
+
+
+def _python_from_env_shebang(target: str, *, env: Mapping[str, str] | None = None) -> Path | None:
+    runtime_env = os.environ if env is None else env
+    parts = target.split()
+    if len(parts) < 2 or Path(parts[0]).name != "env":
+        return None
+    return _resolve_env_utility_from_shebang_tokens(parts, env=runtime_env)
 
 
 def infer_python_from_hermes_bin(hermes_bin: str | Path, *, env: Mapping[str, str] | None = None) -> Path | None:
@@ -135,6 +164,8 @@ def infer_python_from_hermes_bin(hermes_bin: str | Path, *, env: Mapping[str, st
     target = first_line[2:].strip()
     if target.startswith("/"):
         first_token = target.split()[0]
+        if Path(first_token).name == "env":
+            return _python_from_env_shebang(target, env=env)
         candidate = Path(first_token)
         if _is_executable(candidate):
             return candidate.resolve()
