@@ -71,6 +71,92 @@ class InstallScriptTests(unittest.TestCase):
             )
             self.assertNotIn("/usr/bin/env: invalid option", completed.stderr)
             self.assertIn(f"Hermes Python       : {fake_python}", completed.stdout)
+    def test_interactive_bootstrap_installs_tui_dependencies_before_python_module(self):
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cli_bin = root / "cli-bin"
+            runtime_bin = root / "runtime-bin"
+            cli_bin.mkdir()
+            runtime_bin.mkdir()
+            log_path = root / "python.log"
+            fake_python = runtime_bin / "python3"
+            fake_python.write_text(
+                "#!/bin/sh\n"
+                f"LOG={str(log_path)!r}\n"
+                "printf '%s\\n' \"$*\" >> \"$LOG\"\n"
+                "if [ \"$1\" = \"-m\" ] && [ \"$2\" = \"pip\" ]; then exit 0; fi\n"
+                "if [ \"$1\" = \"-m\" ] && [ \"$2\" = \"hermes_stack_bootstrap\" ]; then exit 0; fi\n"
+                "exit 64\n",
+                encoding="utf-8",
+            )
+            fake_python.chmod(0o755)
+            hermes = cli_bin / "hermes"
+            hermes.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1 $2\" = \"config path\" ]; then echo '" + str(root / "home" / ".hermes" / "config.yaml") + "'; fi\n",
+                encoding="utf-8",
+            )
+            hermes.chmod(0o755)
+
+            env = os.environ.copy()
+            env.pop("HERMES_BIN", None)
+            env.pop("HERMES_STACK_PYTHON", None)
+            env.pop("HERMES_HOME", None)
+            env["PATH"] = str(cli_bin) + os.pathsep + str(runtime_bin) + os.pathsep + env.get("PATH", "")
+            env["HOME"] = str(root / "home")
+            env["HERMES_STACK_SOURCE_DIR"] = str(project_root)
+
+            completed = subprocess.run(
+                ["bash", str(project_root / "install.sh"), "--dry-run", "--skip-lcm", "--skip-mnemosyne", "--skip-progress-tail"],
+                env=env,
+                cwd=project_root,
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+
+            self.assertEqual(completed.returncode, 0, msg=f"STDOUT:\n{completed.stdout}\nSTDERR:\n{completed.stderr}")
+            log = log_path.read_text(encoding="utf-8")
+            self.assertIn("-m pip install", log)
+            self.assertIn("PyYAML>=6", log)
+            self.assertIn("rich>=13", log)
+            self.assertIn("prompt_toolkit>=3", log)
+            self.assertLess(log.index("-m pip install"), log.index("-m hermes_stack_bootstrap"))
+
+    def test_interactive_bootstrap_reports_clear_tui_dependency_install_failure(self):
+        project_root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_bin = root / "runtime-bin"
+            runtime_bin.mkdir()
+            fake_python = runtime_bin / "python3"
+            fake_python.write_text(
+                "#!/bin/sh\n"
+                "if [ \"$1\" = \"-m\" ] && [ \"$2\" = \"pip\" ]; then echo 'pip exploded' >&2; exit 23; fi\n"
+                "exit 64\n",
+                encoding="utf-8",
+            )
+            fake_python.chmod(0o755)
+
+            env = os.environ.copy()
+            env["HERMES_STACK_PYTHON"] = str(fake_python)
+            env["HERMES_STACK_SOURCE_DIR"] = str(project_root)
+            env["HOME"] = str(root / "home")
+
+            completed = subprocess.run(
+                ["bash", str(project_root / "install.sh"), "--dry-run"],
+                env=env,
+                cwd=project_root,
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+
+            self.assertNotEqual(completed.returncode, 0)
+            self.assertIn("Failed to install TUI bootstrap dependencies", completed.stderr)
+            self.assertIn(str(fake_python), completed.stderr)
+            self.assertIn("-m pip install", completed.stderr)
 
 
 if __name__ == "__main__":

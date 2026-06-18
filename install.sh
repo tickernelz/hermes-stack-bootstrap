@@ -4,6 +4,7 @@ set -euo pipefail
 REPO="${HERMES_STACK_REPO:-tickernelz/hermes-stack-bootstrap}"
 REF="${HERMES_STACK_REF:-main}"
 SOURCE_DIR="${HERMES_STACK_SOURCE_DIR:-}"
+BOOTSTRAP_DEPS=("PyYAML>=6" "rich>=13" "prompt_toolkit>=3")
 
 is_executable() {
   [[ -n "${1:-}" && -x "$1" && -f "$1" ]]
@@ -266,7 +267,50 @@ tty_available() {
   { : < /dev/tty; } 2>/dev/null
 }
 
+should_bootstrap_tui_deps() {
+  if [[ "${HERMES_STACK_SKIP_BOOTSTRAP_DEPS:-}" == "1" ]]; then
+    return 1
+  fi
+  local arg
+  local has_yes=0
+  local has_dry_run=0
+  for arg in "$@"; do
+    case "$arg" in
+      --yes|-y)
+        has_yes=1
+        ;;
+      --dry-run)
+        has_dry_run=1
+        ;;
+    esac
+  done
+  # Keep noninteractive dry-run purely read-only; real noninteractive installs
+  # still get bootstrap dependencies so PyYAML/config rendering cannot fail late.
+  if (( has_yes == 1 && has_dry_run == 1 )); then
+    return 1
+  fi
+  return 0
+}
+
+install_bootstrap_deps() {
+  echo "Installing TUI bootstrap dependencies with ${PYTHON_BIN}"
+  if "$PYTHON_BIN" -m pip install --upgrade --no-cache-dir "${BOOTSTRAP_DEPS[@]}"; then
+    return 0
+  fi
+  local manual_deps="${BOOTSTRAP_DEPS[*]}"
+  {
+    echo "Error: Failed to install TUI bootstrap dependencies."
+    echo "Python: ${PYTHON_BIN}"
+    echo "Manual install: ${PYTHON_BIN} -m pip install ${manual_deps}"
+    echo "Then rerun this installer. Noninteractive installs can still use --yes."
+  } >&2
+  return 1
+}
+
 run_bootstrap() {
+  if should_bootstrap_tui_deps "$@"; then
+    install_bootstrap_deps
+  fi
   if [[ -t 0 ]]; then
     exec "$PYTHON_BIN" -m hermes_stack_bootstrap "$@"
   elif tty_available; then

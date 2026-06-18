@@ -7,6 +7,7 @@ from unittest.mock import patch
 from hermes_stack_bootstrap.cli import (
     PROGRESS_TAIL_REF,
     InstallerOptions,
+    TuiDependencyError,
     apply_soul_generation,
     base_home_from_config_path,
     build_plan,
@@ -14,10 +15,47 @@ from hermes_stack_bootstrap.cli import (
     install_mnemosyne,
     parse_profiles,
     print_plan,
+    main,
     validate_runtime_options,
     wizard,
 )
 from hermes_stack_bootstrap.hermes_discovery import HermesRuntime
+
+
+class FakeTui:
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.events = []
+
+    def _pop(self):
+        if not self.answers:
+            raise AssertionError("FakeTui ran out of answers")
+        return self.answers.pop(0)
+
+    def banner(self, title: str, subtitle: str) -> None:
+        self.events.append(("banner", title, subtitle))
+
+    def text(self, prompt: str, default: str = "") -> str:
+        self.events.append(("text", prompt, default))
+        answer = self._pop()
+        return default if answer is None else answer
+
+    def confirm(self, prompt: str, default: bool = False) -> bool:
+        self.events.append(("confirm", prompt, default))
+        answer = self._pop()
+        return default if answer is None else bool(answer)
+
+    def select(self, prompt: str, choices, default: str = "") -> str:
+        self.events.append(("select", prompt, tuple(choices), default))
+        answer = self._pop()
+        return default if answer is None else answer
+
+    def password(self, prompt: str) -> str:
+        self.events.append(("password", prompt))
+        return self._pop()
+
+    def runtime_summary(self, runtime) -> None:
+        self.events.append(("runtime", runtime.hermes_bin, runtime.hermes_python))
 
 
 class CliPlanTests(unittest.TestCase):
@@ -41,17 +79,40 @@ class CliPlanTests(unittest.TestCase):
         self.assertEqual(options.profile, "default")
 
     def test_wizard_allows_manual_base_home_override(self):
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch("builtins.input", side_effect=["/opt/hermes", "work", "", "", "", "n"]),
-        ):
-            options = wizard([])
+        tui = FakeTui(["/opt/hermes", "work", "full-local", "", "", False])
+        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
+            options = wizard([], ui=tui)
 
         self.assertEqual(options.base_home, Path("/opt/hermes"))
         self.assertEqual(options.profile, "work")
 
+    def test_interactive_wizard_requires_tui_dependencies_without_injected_ui(self):
+        with patch(
+            "hermes_stack_bootstrap.cli.create_tui",
+            side_effect=TuiDependencyError(
+                "TUI dependencies are required: install with `python -m pip install rich prompt_toolkit`"
+            ),
+        ):
+            with self.assertRaisesRegex(TuiDependencyError, "prompt_toolkit"):
+                wizard([])
+
     def test_progress_tail_ref_defaults_to_latest_release(self):
         self.assertEqual(PROGRESS_TAIL_REF, "latest")
+
+    def test_main_reports_tui_dependency_errors_without_traceback(self):
+        buffer = io.StringIO()
+        with (
+            patch(
+                "hermes_stack_bootstrap.cli.wizard",
+                side_effect=TuiDependencyError("Interactive install requires TUI dependencies: prompt_toolkit"),
+            ),
+            patch("sys.stderr", buffer),
+        ):
+            code = main([])
+
+        self.assertEqual(code, 1)
+        self.assertIn("Error: Interactive install requires TUI dependencies", buffer.getvalue())
+        self.assertNotIn("Traceback", buffer.getvalue())
 
     def test_parse_profiles_accepts_repeated_and_comma_separated_values(self):
         self.assertEqual(
@@ -278,12 +339,12 @@ class CliPlanTests(unittest.TestCase):
             hermes_python=None,
             hermes_python_source="not found",
         )
+        tui = FakeTui([None, "Skip Mnemosyne", None, "", "", False])
         with (
             patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/home/lutfi22/.hermes")),
             patch("hermes_stack_bootstrap.cli.discover_hermes_runtime", return_value=missing_runtime),
-            patch("builtins.input", side_effect=["", "s", "", "", "", "n"]),
         ):
-            options = wizard([])
+            options = wizard([], ui=tui)
 
         self.assertTrue(options.skip_mnemosyne)
         self.assertIsNone(options.hermes_python)
@@ -301,12 +362,12 @@ class CliPlanTests(unittest.TestCase):
             runtime_python.parent.mkdir(parents=True)
             runtime_python.write_text("#!/bin/sh\n", encoding="utf-8")
             runtime_python.chmod(0o755)
+            tui = FakeTui([None, "Paste runtime Python path", str(runtime_python), None, "hybrid", "", "", "", "", False])
             with (
                 patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/home/lutfi22/.hermes")),
                 patch("hermes_stack_bootstrap.cli.discover_hermes_runtime", return_value=missing_runtime),
-                patch("builtins.input", side_effect=["", str(runtime_python), "", "hybrid", "", "", "", "", "n"]),
             ):
-                options = wizard([])
+                options = wizard([], ui=tui)
 
         self.assertFalse(options.skip_mnemosyne)
         self.assertEqual(options.hermes_python, runtime_python)
@@ -359,29 +420,24 @@ class CliPlanTests(unittest.TestCase):
         self.assertEqual(options.mnemosyne_embedding_dim, "1536")
 
     def test_wizard_prompts_for_full_online_embedding_api_key_without_echo(self):
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch(
-                "builtins.input",
-                side_effect=[
-                    "",
-                    "",
-                    "full-online",
-                    "openrouter",
-                    "gpt-5.1-mini",
-                    "https://embeddings.example/v1",
-                    "text-embedding-3-small",
-                    "1536",
-                    "",
-                    "",
-                    "n",
-                ],
-            ),
-            patch("getpass.getpass", return_value="secret-from-prompt") as getpass_mock,
-        ):
-            options = wizard([], env={})
+        tui = FakeTui([
+            None,
+            None,
+            "full-online",
+            "openrouter",
+            "gpt-5.1-mini",
+            "https://embeddings.example/v1",
+            "secret-from-prompt",
+            "text-embedding-3-small",
+            "1536",
+            "",
+            "",
+            False,
+        ])
+        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
+            options = wizard([], env={}, ui=tui)
 
-        getpass_mock.assert_called_once()
+        self.assertIn(("password", "Mnemosyne embedding API key (hidden; empty if endpoint needs no key)"), tui.events)
         self.assertEqual(options.mnemosyne_embedding_api_url, "https://embeddings.example/v1")
         self.assertEqual(options.mnemosyne_embedding_api_key, "secret-from-prompt")
         self.assertEqual(options.mnemosyne_embedding_model, "text-embedding-3-small")
@@ -536,31 +592,26 @@ class CliPlanTests(unittest.TestCase):
         self.assertTrue(options.soul_overwrite)
 
     def test_wizard_prompts_for_interactive_soul_answers(self):
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch(
-                "builtins.input",
-                side_effect=[
-                    "",
-                    "",
-                    "",
-                    "",
-                    "",
-                    "y",
-                    "Gatot",
-                    "Zhafron",
-                    "generalist senior operator",
-                    "direct, skeptical, useful",
-                    "casual Indonesian, concise",
-                    "software engineering and operations",
-                    "sycophancy and fake certainty",
-                    "match user language",
-                    "openrouter",
-                    "anthropic/claude-sonnet-4",
-                ],
-            ),
-        ):
-            options = wizard([])
+        tui = FakeTui([
+            None,
+            None,
+            "full-local",
+            "",
+            "",
+            True,
+            "Gatot",
+            "Zhafron",
+            "generalist senior operator",
+            "direct, skeptical, useful",
+            "casual Indonesian, concise",
+            "software engineering and operations",
+            "sycophancy and fake certainty",
+            "match user language",
+            "openrouter",
+            "anthropic/claude-sonnet-4",
+        ])
+        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
+            options = wizard([], ui=tui)
 
         self.assertTrue(options.generate_soul)
         self.assertEqual(options.soul_agent_name, "Gatot")

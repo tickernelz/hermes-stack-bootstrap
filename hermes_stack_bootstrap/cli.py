@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import difflib
-import getpass
 import json
 import os
 import shutil
@@ -43,6 +42,94 @@ HMX_KNOWLEDGE_REPO = os.environ.get(
 )
 IMPECCABLE_REPO = "https://github.com/pbakaus/impeccable"
 SENSITIVE_ENV_KEYS = {"MNEMOSYNE_EMBEDDING_API_KEY"}
+
+
+class TuiDependencyError(RuntimeError):
+    """Raised when interactive TUI dependencies are unavailable."""
+
+
+class RichPromptTui:
+    """Small TUI facade backed by Rich output and prompt_toolkit input."""
+
+    def __init__(self) -> None:
+        try:
+            from prompt_toolkit import prompt as toolkit_prompt  # type: ignore
+            from prompt_toolkit.completion import WordCompleter  # type: ignore
+            from rich.console import Console  # type: ignore
+            from rich.panel import Panel  # type: ignore
+            from rich.table import Table  # type: ignore
+        except ImportError as exc:  # pragma: no cover - environment dependent
+            manual = f"{sys.executable} -m pip install 'PyYAML>=6' 'rich>=13' 'prompt_toolkit>=3'"
+            raise TuiDependencyError(
+                "Interactive install requires TUI dependencies: rich and prompt_toolkit. "
+                "The install.sh bootstrapper installs them automatically. "
+                f"If you run the Python module directly, install them manually with: {manual}"
+            ) from exc
+        self._prompt = toolkit_prompt
+        self._word_completer = WordCompleter
+        self.console = Console()
+        self._panel = Panel
+        self._table = Table
+
+    def banner(self, title: str, subtitle: str) -> None:
+        self.console.print(self._panel(subtitle, title=title, border_style="cyan"))
+
+    def text(self, prompt: str, default: str = "") -> str:
+        suffix = f" [{default}]" if default else ""
+        value = self._prompt(f"{prompt}{suffix}: ").strip()
+        return value or default
+
+    def password(self, prompt: str) -> str:
+        return self._prompt(f"{prompt}: ", is_password=True).strip()
+
+    def confirm(self, prompt: str, default: bool = False) -> bool:
+        suffix = "Y/n" if default else "y/N"
+        while True:
+            answer = self._prompt(f"{prompt} [{suffix}] ").strip().lower()
+            if not answer:
+                return default
+            if answer in {"y", "yes"}:
+                return True
+            if answer in {"n", "no"}:
+                return False
+            self.console.print("[yellow]Please answer yes or no.[/yellow]")
+
+    def select(self, prompt: str, choices: Sequence[str], default: str = "") -> str:
+        choices = tuple(choices)
+        if not choices:
+            return default
+        default = default if default in choices else choices[0]
+        table = self._table.grid(padding=(0, 2))
+        table.add_column(justify="right")
+        table.add_column()
+        for index, choice in enumerate(choices, start=1):
+            marker = "*" if choice == default else " "
+            table.add_row(f"{index}.", f"{marker} {choice}")
+        self.console.print(prompt)
+        self.console.print(table)
+        completer = self._word_completer(list(choices), ignore_case=True)
+        while True:
+            answer = self._prompt(f"Select [{default}]: ", completer=completer).strip()
+            if not answer:
+                return default
+            if answer.isdigit() and 1 <= int(answer) <= len(choices):
+                return choices[int(answer) - 1]
+            for choice in choices:
+                if answer.lower() == choice.lower():
+                    return choice
+            self.console.print(f"[yellow]Choose one of: {', '.join(choices)}[/yellow]")
+
+    def runtime_summary(self, runtime: HermesRuntime) -> None:
+        table = self._table(title="Detected Hermes runtime", show_header=False)
+        table.add_column("Field", style="cyan")
+        table.add_column("Value")
+        table.add_row("Hermes CLI", f"{runtime.hermes_bin or 'not found'} ({runtime.hermes_bin_source})")
+        table.add_row("Hermes Python", f"{runtime.hermes_python or 'not found'} ({runtime.hermes_python_source})")
+        self.console.print(table)
+
+
+def create_tui() -> RichPromptTui:
+    return RichPromptTui()
 
 
 @dataclass(frozen=True)
@@ -655,7 +742,7 @@ def backup_soul_file(soul_path: Path) -> Path:
     return backup_dir
 
 
-def resolve_soul_overwrite_before_apply(plan: InstallPlan) -> InstallPlan:
+def resolve_soul_overwrite_before_apply(plan: InstallPlan, ui: RichPromptTui | None = None) -> InstallPlan:
     if not plan.options.generate_soul or plan.options.dry_run:
         return plan
     soul_path = plan.target_home / "SOUL.md"
@@ -663,8 +750,7 @@ def resolve_soul_overwrite_before_apply(plan: InstallPlan) -> InstallPlan:
         return plan
     if plan.options.yes:
         raise ValueError(f"SOUL.md already exists at {soul_path}; pass --soul-overwrite to replace it")
-    answer = input(f"SOUL.md already exists at {soul_path}. Overwrite after backup? [y/N] ").strip().lower()
-    if answer not in {"y", "yes"}:
+    if not prompt_yes_no(f"SOUL.md already exists at {soul_path}. Overwrite after backup?", False, ui):
         print("SOUL.md generation skipped.")
         return dataclasses.replace(plan, options=dataclasses.replace(plan.options, generate_soul=False))
     return dataclasses.replace(plan, options=dataclasses.replace(plan.options, soul_overwrite=True))
@@ -718,15 +804,15 @@ def run_verification(plan: InstallPlan) -> None:
         run_command(command, dry_run=False)
 
 
-def apply_plan(plan: InstallPlan) -> None:
+def apply_plan(plan: InstallPlan, ui: RichPromptTui | None = None) -> None:
     validate_runtime_options(plan.options)
     print_plan(plan)
     if not plan.options.yes:
-        answer = input("\nApply this plan? [y/N] ").strip().lower()
-        if answer not in {"y", "yes"}:
+        ui = require_tui(ui)
+        if not prompt_yes_no("Apply this plan?", False, ui):
             print("Aborted.")
             return
-    plan = resolve_soul_overwrite_before_apply(plan)
+    plan = resolve_soul_overwrite_before_apply(plan, ui)
     install_lcm(plan)
     install_mnemosyne(plan)
     install_progress_tail(plan)
@@ -737,20 +823,23 @@ def apply_plan(plan: InstallPlan) -> None:
     print("\nDone. Restart Hermes manually after applying changes: /restart")
 
 
-def apply_plans(plans: tuple[InstallPlan, ...]) -> None:
+def apply_plans(plans: tuple[InstallPlan, ...], ui: RichPromptTui | None = None) -> None:
     if len(plans) == 1:
-        apply_plan(plans[0])
+        apply_plan(plans[0], ui)
         return
 
     print(f"Applying {len(plans)} profile plans sequentially: {', '.join(plan.options.profile for plan in plans)}")
     for index, plan in enumerate(plans, start=1):
         print(f"\n### Profile {index}/{len(plans)}: {plan.options.profile}")
-        apply_plan(plan)
+        apply_plan(plan, ui)
 
 
-def prompt_default(prompt: str, default: str) -> str:
-    value = input(f"{prompt} [{default}]: ").strip()
-    return value or default
+def require_tui(ui: RichPromptTui | None = None) -> RichPromptTui:
+    return ui or create_tui()
+
+
+def prompt_default(prompt: str, default: str, ui: RichPromptTui | None = None) -> str:
+    return require_tui(ui).text(prompt, default)
 
 
 def _env_get(env: os._Environ[str] | dict[str, str], key: str, default: str = "") -> str:
@@ -809,47 +898,54 @@ def validate_soul_options(args: argparse.Namespace) -> None:
             raise ValueError(f"--generate-soul requires {flag}")
 
 
-def prompt_yes_no(prompt: str, default: bool = False) -> bool:
-    suffix = "Y/n" if default else "y/N"
-    answer = input(f"{prompt} [{suffix}] ").strip().lower()
-    if not answer:
-        return default
-    return answer in {"y", "yes"}
+def prompt_yes_no(prompt: str, default: bool = False, ui: RichPromptTui | None = None) -> bool:
+    return require_tui(ui).confirm(prompt, default)
 
 
-def prompt_missing_runtime_python(runtime: HermesRuntime) -> tuple[HermesRuntime, bool]:
-    print("\nHermes runtime Python was not found, so Mnemosyne cannot be installed safely yet.")
-    print(f"Detected Hermes CLI: {runtime.hermes_bin or 'not found'} ({runtime.hermes_bin_source})")
-    print("Enter the Python path used by Hermes, or type 's' to skip Mnemosyne for this run, or 'q' to abort.")
+def prompt_missing_runtime_python(runtime: HermesRuntime, ui: RichPromptTui | None = None) -> tuple[HermesRuntime, bool]:
+    tui = require_tui(ui)
+    action = tui.select(
+        "Hermes runtime Python was not found, so Mnemosyne cannot be installed safely yet.",
+        ("Skip Mnemosyne", "Paste runtime Python path", "Abort"),
+        "Skip Mnemosyne",
+    )
+    if action == "Skip Mnemosyne":
+        return runtime, True
+    if action == "Abort":
+        raise ValueError("Aborted: Hermes runtime Python was not found")
     while True:
-        answer = input("Hermes runtime Python path [s]: ").strip()
-        if not answer or answer.lower() in {"s", "skip"}:
-            return runtime, True
-        if answer.lower() in {"q", "quit", "abort"}:
-            raise ValueError("Aborted: Hermes runtime Python was not found")
+        answer = tui.text("Hermes runtime Python path", "")
+        if not answer:
+            continue
         candidate = Path(answer).expanduser()
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return dataclasses.replace(runtime, hermes_python=candidate, hermes_python_source="manual prompt"), False
-        print(f"Not executable: {candidate}")
-        print("Try a path like /path/to/hermes-agent/venv/bin/python, or type 's' to skip Mnemosyne.")
+        if tui.confirm(f"Not executable: {candidate}. Skip Mnemosyne instead?", True):
+            return runtime, True
 
 
-def prompt_soul_answers(args: argparse.Namespace) -> None:
-    args.soul_agent_name = prompt_default("Agent name", args.soul_agent_name or "Hermes")
-    args.soul_user_name = prompt_default("User name", args.soul_user_name)
-    args.soul_role = prompt_default("Agent role", args.soul_role or "generalist assistant")
-    args.soul_behavior = prompt_default("Behavior / personality", args.soul_behavior)
-    args.soul_communication = prompt_default("Communication style", args.soul_communication)
-    args.soul_focus = prompt_default("Main focus", args.soul_focus)
-    args.soul_avoid = prompt_default("Things to avoid", args.soul_avoid)
-    args.soul_language = prompt_default("Default language", args.soul_language or "match user language")
+def prompt_soul_answers(args: argparse.Namespace, ui: RichPromptTui | None = None) -> None:
+    tui = require_tui(ui)
+    args.soul_agent_name = prompt_default("Agent name", args.soul_agent_name or "Hermes", tui)
+    args.soul_user_name = prompt_default("User name", args.soul_user_name, tui)
+    args.soul_role = prompt_default("Agent role", args.soul_role or "generalist assistant", tui)
+    args.soul_behavior = prompt_default("Behavior / personality", args.soul_behavior, tui)
+    args.soul_communication = prompt_default("Communication style", args.soul_communication, tui)
+    args.soul_focus = prompt_default("Main focus", args.soul_focus, tui)
+    args.soul_avoid = prompt_default("Things to avoid", args.soul_avoid, tui)
+    args.soul_language = prompt_default("Default language", args.soul_language or "match user language", tui)
     args.soul_provider = prompt_default(
-        "SOUL generation provider override (empty = Hermes default)", args.soul_provider
+        "SOUL generation provider override (empty = Hermes default)", args.soul_provider, tui
     )
-    args.soul_model = prompt_default("SOUL generation model override (empty = Hermes default)", args.soul_model)
+    args.soul_model = prompt_default("SOUL generation model override (empty = Hermes default)", args.soul_model, tui)
 
 
-def wizard(argv: Iterable[str] | None = None, *, env: os._Environ[str] | dict[str, str] | None = None) -> InstallerOptions:
+def wizard(
+    argv: Iterable[str] | None = None,
+    *,
+    env: os._Environ[str] | dict[str, str] | None = None,
+    ui: RichPromptTui | None = None,
+) -> InstallerOptions:
     runtime_env = os.environ if env is None else env
     parser = argparse.ArgumentParser(description="Bootstrap Hermes LCM + Mnemosyne + progress-tail")
     parser.add_argument("--home", default=None)
@@ -958,25 +1054,29 @@ def wizard(argv: Iterable[str] | None = None, *, env: os._Environ[str] | dict[st
     )
     profiles = parse_profiles(args.profile)
     if not args.yes:
-        print("Hermes Stack Bootstrap")
-        print("Installs: hermes-lcm, Mnemosyne, hermes-progress-tail; optional skill packs are flag-gated.")
-        home = Path(prompt_default("Hermes base path", str(home))).expanduser()
+        tui = require_tui(ui)
+        tui.banner(
+            "Hermes Stack Bootstrap",
+            "Installs hermes-lcm, Mnemosyne, and hermes-progress-tail. Optional skill packs are flag-gated.",
+        )
+        home = Path(prompt_default("Hermes base path", str(home), tui)).expanduser()
         runtime = discover_hermes_runtime(
             base_home=home,
             hermes_bin=args.hermes_bin,
             hermes_python=args.hermes_python,
             env=runtime_env,
         )
-        print(f"Detected Hermes CLI: {runtime.hermes_bin or 'not found'} ({runtime.hermes_bin_source})")
-        print(f"Detected Hermes runtime Python: {runtime.hermes_python or 'not found'} ({runtime.hermes_python_source})")
+        tui.runtime_summary(runtime)
         if runtime.hermes_python is None and not args.skip_mnemosyne:
-            runtime, skip_mnemosyne = prompt_missing_runtime_python(runtime)
+            runtime, skip_mnemosyne = prompt_missing_runtime_python(runtime, tui)
             args.skip_mnemosyne = skip_mnemosyne
         if args.profile is None:
-            profiles = parse_profiles(prompt_default("Target profile(s), comma-separated", "default"))
+            profiles = parse_profiles(prompt_default("Target profile(s), comma-separated", "default", tui))
         if not args.skip_mnemosyne:
-            args.mnemosyne_mode = prompt_default(
-                "Mnemosyne mode (full-local, hybrid, full-online)", args.mnemosyne_mode
+            args.mnemosyne_mode = tui.select(
+                "Mnemosyne mode",
+                tuple(MNEMOSYNE_MODES),
+                args.mnemosyne_mode,
             ).strip().lower()
             if args.mnemosyne_mode not in MNEMOSYNE_MODES:
                 raise ValueError(f"Unknown Mnemosyne mode: {args.mnemosyne_mode}")
@@ -985,40 +1085,45 @@ def wizard(argv: Iterable[str] | None = None, *, env: os._Environ[str] | dict[st
             args.mnemosyne_llm_provider = prompt_default(
                 "Mnemosyne Hermes LLM provider override (empty = Hermes auxiliary/default)",
                 args.mnemosyne_llm_provider,
+                tui,
             )
             args.mnemosyne_llm_model = prompt_default(
                 "Mnemosyne Hermes LLM model override (empty = Hermes auxiliary/default)",
                 args.mnemosyne_llm_model,
+                tui,
             )
         if not args.skip_mnemosyne and args.mnemosyne_mode == "full-online":
             args.mnemosyne_embedding_api_url = prompt_default(
                 "Mnemosyne embedding API URL (empty = configure later)",
                 args.mnemosyne_embedding_api_url,
+                tui,
             )
             if args.mnemosyne_embedding_api_url:
                 if not args.mnemosyne_embedding_api_key:
-                    args.mnemosyne_embedding_api_key = getpass.getpass(
-                        "Mnemosyne embedding API key (hidden; empty if endpoint needs no key): "
+                    args.mnemosyne_embedding_api_key = tui.password(
+                        "Mnemosyne embedding API key (hidden; empty if endpoint needs no key)"
                     ).strip()
                 args.mnemosyne_embedding_model = prompt_default(
-                    "Mnemosyne embedding model", args.mnemosyne_embedding_model
+                    "Mnemosyne embedding model", args.mnemosyne_embedding_model, tui
                 )
                 args.mnemosyne_embedding_dim = prompt_default(
-                    "Mnemosyne embedding dimension", args.mnemosyne_embedding_dim
+                    "Mnemosyne embedding dimension", args.mnemosyne_embedding_dim, tui
                 )
         if not args.summary_model:
             args.lcm_summary_model = prompt_default(
                 "LCM summary model (empty = Hermes auxiliary.compression)",
                 args.lcm_summary_model,
+                tui,
             )
             args.lcm_expansion_model = prompt_default(
                 "LCM expansion model (empty = summary model / Hermes auxiliary)",
                 args.lcm_expansion_model,
+                tui,
             )
         if not args.generate_soul:
-            args.generate_soul = prompt_yes_no("Generate SOUL.md with Hermes AI backend?", False)
+            args.generate_soul = prompt_yes_no("Generate SOUL.md with Hermes AI backend?", False, tui)
         if args.generate_soul:
-            prompt_soul_answers(args)
+            prompt_soul_answers(args, tui)
     if args.summary_model:
         args.lcm_summary_model = args.summary_model
         if not args.lcm_expansion_model:
@@ -1076,9 +1181,9 @@ def wizard(argv: Iterable[str] | None = None, *, env: os._Environ[str] | dict[st
 
 
 def main(argv: Iterable[str] | None = None) -> int:
-    options = wizard(argv)
-    plans = build_plans(options)
     try:
+        options = wizard(argv)
+        plans = build_plans(options)
         apply_plans(plans)
     except subprocess.CalledProcessError as exc:
         print(f"Command failed with exit code {exc.returncode}: {exc.cmd}", file=sys.stderr)

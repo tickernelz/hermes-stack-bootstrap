@@ -26,7 +26,7 @@ Dry run first:
 curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/main/install.sh | bash -s -- --dry-run
 ```
 
-`curl | bash` works in interactive mode: the shell wrapper reattaches Python prompts to `/dev/tty` when stdin is the curl pipe.
+`curl | bash` works in interactive mode: the shell wrapper reattaches the Python TUI to `/dev/tty` when stdin is the curl pipe. Interactive mode is TUI-only and uses `Rich` + `prompt_toolkit`; `install.sh` automatically bootstraps `PyYAML`, `Rich`, and `prompt_toolkit` into the selected Hermes runtime Python before launching the wizard. If that dependency bootstrap fails, the installer exits with the exact manual `python -m pip install ...` command to run.
 
 Inspect first:
 
