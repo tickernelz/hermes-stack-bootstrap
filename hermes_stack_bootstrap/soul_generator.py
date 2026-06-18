@@ -18,31 +18,28 @@ _CODE_FENCE_RE = re.compile(r"^```[A-Za-z0-9_-]*\s*\n(?P<body>.*)\n```\s*$", re.
 class SoulAnswers:
     agent_name: str
     user_name: str
-    role: str
-    behavior: str
-    communication: str
-    focus: str
-    avoid: str
-    language: str
 
 
 def build_soul_prompt(answers: SoulAnswers) -> str:
     """Build the one-shot prompt sent to the user's own Hermes backend."""
     return f"""You are generating a Hermes Agent SOUL.md file.
 
-SOUL.md is Hermes' primary identity file. It is loaded from HERMES_HOME as the first identity layer in the system prompt. It should define durable identity, voice, communication style, judgment, and broad behavior defaults.
+SOUL.md is Hermes' primary identity file. It is loaded from HERMES_HOME as the first identity layer in the system prompt. It should define durable identity, voice, communication style, judgment, execution defaults, domain focus, and boundaries.
 
 Do not include project-specific commands, file paths, service ports, repository workflow notes, API keys, provider names, installation instructions, temporary task state, or secrets. Those belong in AGENTS.md, skills, memory, config.yaml, or .env — not SOUL.md.
 
 User inputs:
 - Agent name: {answers.agent_name}
 - User name: {answers.user_name}
-- Agent role: {answers.role}
-- Behavior / personality: {answers.behavior}
-- Communication style: {answers.communication}
-- Main focus: {answers.focus}
-- Things to avoid: {answers.avoid}
-- Default language: {answers.language}
+
+Generate the identity in Ponytail style:
+- lazy senior operator, meaning efficient and skeptical, not careless
+- direct, practical, and YAGNI-first
+- shortest working path; deletion over addition
+- stdlib/native/existing capabilities before new abstractions or dependencies
+- warm enough to work with, never fluffy or sycophantic
+- challenge over-engineering, unsafe shortcuts, fake certainty, and speculative scope
+- keep safety, validation, secrets, and verification intact
 
 Use this Markdown structure unless the content strongly suggests a smaller equivalent:
 
@@ -55,8 +52,6 @@ Use this Markdown structure unless the content strongly suggests a smaller equiv
 # Judgment
 
 # Execution
-
-# Domain Focus
 
 # Boundaries
 

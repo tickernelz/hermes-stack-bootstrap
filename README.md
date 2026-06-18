@@ -42,12 +42,13 @@ bash install.sh
 | Component | Install method | Notes |
 |---|---|---|
 | `hermes-lcm` | clones/updates `https://github.com/stephenschoettler/hermes-lcm` into the selected Hermes plugin directory | follows the upstream repo layout |
-| `mnemosyne-memory` | installs mode-specific Mnemosyne package set into the Hermes runtime venv | default `full-local`; `hybrid` and `full-online` are available |
+| `mnemosyne-memory` | installs mode-specific Mnemosyne package set into the Hermes runtime venv | default `hybrid`; `full-local` and `full-online` are available |
 | `hermes-progress-tail` | runs the upstream `install.sh` from the latest GitHub release | can be pinned with `--progress-tail-ref` |
-| `SOUL.md` generation | optional one-shot `hermes chat -q` call through the user's configured Hermes backend | enable with `--generate-soul`; no fallback mode |
+| `SOUL.md` generation | optional one-shot `hermes chat -q` call through the user's configured Hermes backend | interactive mode asks only agent name + user name |
 | `obra/superpowers` | optional `git clone --depth=1` into `skills/vendor/obra-superpowers` | enable with `--install-superpowers` |
 | HMX knowledge | optional clone into `skills/vendor/hmx-knowledge` | private repo; user must already have SSH/token access |
 | `pbakaus/impeccable` | optional `git clone --depth=1` into `skills/vendor/impeccable` | enable with `--install-impeccable` |
+| `DietrichGebert/ponytail` | optional, strongly recommended `git clone --depth=1` into `skills/vendor/ponytail` | interactive default is yes; non-interactive flag is `--install-ponytail` |
 
 ## Safety model
 
@@ -197,13 +198,13 @@ Leave them empty to let Hermes resolve `auxiliary.compression`. The old `--summa
 Choose a Mnemosyne mode:
 
 ```bash
-# Default: local embeddings + local GGUF LLM consolidation
-bash install.sh --mnemosyne-mode full-local
-
-# Hybrid: local embeddings + Hermes provider/model for Mnemosyne LLM consolidation
+# Default: hybrid local embeddings + Hermes provider/model for Mnemosyne LLM consolidation
 bash install.sh --mnemosyne-mode hybrid \
   --mnemosyne-llm-provider openrouter \
   --mnemosyne-llm-model anthropic/claude-sonnet-4
+
+# Full local: local embeddings + local GGUF LLM consolidation
+bash install.sh --mnemosyne-mode full-local
 
 # Full online: Hermes provider/model for Mnemosyne LLM; installer also asks for embedding API URL/key/model/dim in interactive mode
 bash install.sh --mnemosyne-mode full-online \
@@ -234,13 +235,7 @@ Non-interactive example:
 ```bash
 bash install.sh --yes --generate-soul \
   --soul-agent-name Gatot \
-  --soul-user-name Zhafron \
-  --soul-role "generalist senior operator" \
-  --soul-behavior "direct, skeptical, useful" \
-  --soul-communication "casual Indonesian, concise" \
-  --soul-focus "software engineering and operations" \
-  --soul-avoid "sycophancy, fake certainty, overengineering" \
-  --soul-language "match user language"
+  --soul-user-name Zhafron
 ```
 
 Use the user's Hermes default provider/model by default. Optional override:
@@ -272,6 +267,7 @@ Install optional skill packs:
 ```bash
 bash install.sh --install-superpowers
 bash install.sh --install-impeccable
+bash install.sh --install-ponytail
 ```
 
 Install the private HMX knowledge repo:

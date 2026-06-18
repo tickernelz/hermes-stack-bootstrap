@@ -12,6 +12,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
@@ -28,6 +29,7 @@ from .env_template import (
     render_env_block,
 )
 from .hermes_discovery import HermesRuntime, discover_hermes_runtime
+from .hermes_models import ProviderChoice, model_choices_for_provider, provider_choices
 from .soul_generator import SoulAnswers, generate_soul_with_hermes
 
 
@@ -41,6 +43,7 @@ HMX_KNOWLEDGE_REPO = os.environ.get(
     "git@gitlab.com:hashmicro1/hmx/hmx-knowledge.git",
 )
 IMPECCABLE_REPO = "https://github.com/pbakaus/impeccable"
+PONYTAIL_REPO = "https://github.com/DietrichGebert/ponytail"
 SENSITIVE_ENV_KEYS = {"MNEMOSYNE_EMBEDDING_API_KEY"}
 
 
@@ -145,7 +148,7 @@ class InstallerOptions:
     summary_model: str = ""
     lcm_summary_model: str = DEFAULT_LCM_SUMMARY_MODEL
     lcm_expansion_model: str = ""
-    mnemosyne_mode: str = "full-local"
+    mnemosyne_mode: str = "hybrid"
     mnemosyne_host_llm_provider: str = ""
     mnemosyne_host_llm_model: str = ""
     mnemosyne_embedding_api_url: str = ""
@@ -159,6 +162,7 @@ class InstallerOptions:
     install_superpowers: bool = False
     install_hmx_knowledge: bool = False
     install_impeccable: bool = False
+    install_ponytail: bool = False
     hmx_knowledge_url: str = HMX_KNOWLEDGE_REPO
     generate_soul: bool = False
     soul_agent_name: str = ""
@@ -394,16 +398,7 @@ def mnemosyne_pip_packages(mode: str) -> str:
 
 
 def soul_answers_from_options(options: InstallerOptions) -> SoulAnswers:
-    return SoulAnswers(
-        agent_name=options.soul_agent_name,
-        user_name=options.soul_user_name,
-        role=options.soul_role,
-        behavior=options.soul_behavior,
-        communication=options.soul_communication,
-        focus=options.soul_focus,
-        avoid=options.soul_avoid,
-        language=options.soul_language,
-    )
+    return SoulAnswers(agent_name=options.soul_agent_name, user_name=options.soul_user_name)
 
 
 def soul_generation_command_preview(options: InstallerOptions) -> str:
@@ -494,6 +489,16 @@ def build_plan(options: InstallerOptions) -> InstallPlan:
                 "Optional: install Impeccable design skill",
                 skill_repo_clone_command(IMPECCABLE_REPO, dest),
                 "Installs the public Impeccable skill repo under skills/vendor/.",
+            )
+        )
+
+    if options.install_ponytail:
+        dest = skill_vendor_dir(target_home, "ponytail")
+        steps.append(
+            PlanStep(
+                "Optional recommended: install Ponytail skill pack",
+                skill_repo_clone_command(PONYTAIL_REPO, dest),
+                "Strongly recommended YAGNI/minimalism guide for keeping Hermes behavior and engineering work simple.",
             )
         )
 
@@ -622,22 +627,73 @@ def install_lcm(plan: InstallPlan) -> None:
         run_command(["git", "clone", LCM_REPO, str(lcm_dir)], dry_run=plan.options.dry_run)
 
 
+def mnemosyne_packages_satisfied(hermes_python: Path, packages: Sequence[str]) -> bool:
+    """Return True when pip resolver says the requested packages are satisfied."""
+    with tempfile.NamedTemporaryFile(suffix=".json") as report:
+        try:
+            subprocess.run(
+                [
+                    str(hermes_python),
+                    "-m",
+                    "pip",
+                    "install",
+                    "--dry-run",
+                    "--quiet",
+                    "--report",
+                    report.name,
+                    *packages,
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            data = json.loads(Path(report.name).read_text(encoding="utf-8"))
+            return not data.get("install")
+        except Exception:
+            return False
+
+
+def mnemosyne_runtime_needs_sudo(hermes_python: Path) -> bool:
+    """Return True when the Hermes runtime Python writes to non-writable paths."""
+    probe = (
+        "import json,sysconfig;"
+        "paths=[sysconfig.get_paths().get('purelib',''),sysconfig.get_paths().get('platlib',''),sysconfig.get_path('scripts') or ''];"
+        "print(json.dumps([p for p in paths if p]))"
+    )
+    completed = subprocess.run(
+        [str(hermes_python), "-c", probe],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    paths = json.loads(completed.stdout or "[]")
+    return any(path and not os.access(path, os.W_OK) for path in paths)
+
+
 def install_mnemosyne(plan: InstallPlan) -> None:
     if plan.options.skip_mnemosyne:
         return
     hermes_py = runtime_python_for_options(plan.options)
-    run_command(
-        [
-            str(hermes_py),
-            "-m",
-            "pip",
-            "install",
-            "--upgrade",
-            "--no-cache-dir",
-            *mnemosyne_pip_package_list(plan.options.mnemosyne_mode),
-        ],
-        dry_run=plan.options.dry_run,
-    )
+    packages = mnemosyne_pip_package_list(plan.options.mnemosyne_mode)
+    if plan.options.dry_run:
+        run_command([str(hermes_py), "-m", "pip", "install", "--upgrade", "--no-cache-dir", *packages], dry_run=True)
+    elif mnemosyne_packages_satisfied(hermes_py, packages):
+        print("Mnemosyne packages already installed in Hermes runtime Python. Skipping pip install.")
+    else:
+        pip_command = [str(hermes_py), "-m", "pip", "install", "--upgrade", "--no-cache-dir", *packages]
+        if mnemosyne_runtime_needs_sudo(hermes_py):
+            sudo_command = ["sudo", *pip_command]
+            if plan.options.yes:
+                raise PermissionError(
+                    "Hermes runtime venv is not writable. Install missing Mnemosyne packages manually: "
+                    f"{render_command(sudo_command)}"
+                )
+            run_command(["sudo", "-v"], dry_run=False)
+            run_command(sudo_command, dry_run=False)
+        else:
+            run_command(pip_command, dry_run=False)
     run_command(
         [str(hermes_py), "-m", "mnemosyne.install"],
         dry_run=plan.options.dry_run,
@@ -686,6 +742,12 @@ def install_optional_skills(plan: InstallPlan) -> None:
         install_skill_repo(
             IMPECCABLE_REPO,
             skill_vendor_dir(plan.target_home, "impeccable"),
+            dry_run=plan.options.dry_run,
+        )
+    if plan.options.install_ponytail:
+        install_skill_repo(
+            PONYTAIL_REPO,
+            skill_vendor_dir(plan.target_home, "ponytail"),
             dry_run=plan.options.dry_run,
         )
 
@@ -886,12 +948,6 @@ def validate_soul_options(args: argparse.Namespace) -> None:
     required = {
         "soul_agent_name": "--soul-agent-name",
         "soul_user_name": "--soul-user-name",
-        "soul_role": "--soul-role",
-        "soul_behavior": "--soul-behavior",
-        "soul_communication": "--soul-communication",
-        "soul_focus": "--soul-focus",
-        "soul_avoid": "--soul-avoid",
-        "soul_language": "--soul-language",
     }
     for attr, flag in required.items():
         if not getattr(args, attr, "").strip():
@@ -924,20 +980,58 @@ def prompt_missing_runtime_python(runtime: HermesRuntime, ui: RichPromptTui | No
             return runtime, True
 
 
+def select_provider_and_model(
+    *,
+    tui: RichPromptTui,
+    providers: list[ProviderChoice],
+    provider_prompt: str,
+    model_prompt: str,
+    current_provider: str = "",
+    current_model: str = "",
+    hermes_python: Path | None = None,
+    hermes_home: Path | None = None,
+) -> tuple[str, str]:
+    if not providers:
+        return current_provider, current_model
+    by_label = {choice.label: choice for choice in providers}
+    default_label = next((choice.label for choice in providers if choice.slug == current_provider), providers[0].label)
+    provider_label = tui.select(provider_prompt, ("Use Hermes default", *by_label), "Use Hermes default" if not current_provider else default_label)
+    if provider_label == "Use Hermes default":
+        return "", ""
+    provider = by_label[provider_label]
+    models = model_choices_for_provider(provider.slug, providers, hermes_python, hermes_home)
+    if not models:
+        return provider.slug, current_model
+    default_model = current_model if current_model in models else models[0]
+    model = tui.select(model_prompt, models, default_model)
+    return provider.slug, model
+
+
+def select_model_from_detected_providers(
+    *,
+    tui: RichPromptTui,
+    providers: list[ProviderChoice],
+    prompt: str,
+    current_model: str = "",
+    default_model: str = "",
+) -> str:
+    models: list[str] = []
+    seen: set[str] = set()
+    for provider in providers:
+        for model in provider.models:
+            if model not in seen:
+                seen.add(model)
+                models.append(model)
+    if not models:
+        return tui.text(f"{prompt} (empty = Hermes auxiliary/default)", current_model or default_model)
+    default = current_model if current_model in models else (default_model if default_model in models else models[0])
+    return tui.select(prompt, models, default)
+
+
 def prompt_soul_answers(args: argparse.Namespace, ui: RichPromptTui | None = None) -> None:
     tui = require_tui(ui)
     args.soul_agent_name = prompt_default("Agent name", args.soul_agent_name or "Hermes", tui)
     args.soul_user_name = prompt_default("User name", args.soul_user_name, tui)
-    args.soul_role = prompt_default("Agent role", args.soul_role or "generalist assistant", tui)
-    args.soul_behavior = prompt_default("Behavior / personality", args.soul_behavior, tui)
-    args.soul_communication = prompt_default("Communication style", args.soul_communication, tui)
-    args.soul_focus = prompt_default("Main focus", args.soul_focus, tui)
-    args.soul_avoid = prompt_default("Things to avoid", args.soul_avoid, tui)
-    args.soul_language = prompt_default("Default language", args.soul_language or "match user language", tui)
-    args.soul_provider = prompt_default(
-        "SOUL generation provider override (empty = Hermes default)", args.soul_provider, tui
-    )
-    args.soul_model = prompt_default("SOUL generation model override (empty = Hermes default)", args.soul_model, tui)
 
 
 def wizard(
@@ -983,7 +1077,7 @@ def wizard(
     parser.add_argument(
         "--mnemosyne-mode",
         choices=MNEMOSYNE_MODES,
-        default=_env_get(runtime_env, "HERMES_STACK_MNEMOSYNE_MODE", "full-local"),
+        default=_env_get(runtime_env, "HERMES_STACK_MNEMOSYNE_MODE", "hybrid"),
         help="full-local=local embeddings+local GGUF LLM; hybrid=local embeddings+Hermes LLM; full-online=Hermes LLM+user-managed embedding endpoint/model.",
     )
     parser.add_argument(
@@ -1025,6 +1119,7 @@ def wizard(
     parser.add_argument("--install-superpowers", action="store_true")
     parser.add_argument("--install-hmx-knowledge", action="store_true")
     parser.add_argument("--install-impeccable", action="store_true")
+    parser.add_argument("--install-ponytail", action="store_true")
     parser.add_argument("--generate-soul", action="store_true", help="Generate SOUL.md once via the user's Hermes AI backend.")
     parser.add_argument("--soul-agent-name", default="")
     parser.add_argument("--soul-user-name", default="")
@@ -1067,6 +1162,7 @@ def wizard(
             env=runtime_env,
         )
         tui.runtime_summary(runtime)
+        detected_providers = provider_choices(runtime.hermes_python, home)
         if runtime.hermes_python is None and not args.skip_mnemosyne:
             runtime, skip_mnemosyne = prompt_missing_runtime_python(runtime, tui)
             args.skip_mnemosyne = skip_mnemosyne
@@ -1082,15 +1178,15 @@ def wizard(
                 raise ValueError(f"Unknown Mnemosyne mode: {args.mnemosyne_mode}")
         apply_full_online_embedding_env_defaults(args, runtime_env)
         if not args.skip_mnemosyne and args.mnemosyne_mode in {"hybrid", "full-online"}:
-            args.mnemosyne_llm_provider = prompt_default(
-                "Mnemosyne Hermes LLM provider override (empty = Hermes auxiliary/default)",
-                args.mnemosyne_llm_provider,
-                tui,
-            )
-            args.mnemosyne_llm_model = prompt_default(
-                "Mnemosyne Hermes LLM model override (empty = Hermes auxiliary/default)",
-                args.mnemosyne_llm_model,
-                tui,
+            args.mnemosyne_llm_provider, args.mnemosyne_llm_model = select_provider_and_model(
+                tui=tui,
+                providers=detected_providers,
+                provider_prompt="Mnemosyne host LLM provider",
+                model_prompt="Mnemosyne host LLM model",
+                current_provider=args.mnemosyne_llm_provider,
+                current_model=args.mnemosyne_llm_model,
+                hermes_python=runtime.hermes_python,
+                hermes_home=home,
             )
         if not args.skip_mnemosyne and args.mnemosyne_mode == "full-online":
             args.mnemosyne_embedding_api_url = prompt_default(
@@ -1110,16 +1206,21 @@ def wizard(
                     "Mnemosyne embedding dimension", args.mnemosyne_embedding_dim, tui
                 )
         if not args.summary_model:
-            args.lcm_summary_model = prompt_default(
-                "LCM summary model (empty = Hermes auxiliary.compression)",
-                args.lcm_summary_model,
-                tui,
+            args.lcm_summary_model = select_model_from_detected_providers(
+                tui=tui,
+                providers=detected_providers,
+                prompt="LCM summary model",
+                current_model=args.lcm_summary_model,
             )
-            args.lcm_expansion_model = prompt_default(
-                "LCM expansion model (empty = summary model / Hermes auxiliary)",
-                args.lcm_expansion_model,
-                tui,
+            args.lcm_expansion_model = select_model_from_detected_providers(
+                tui=tui,
+                providers=detected_providers,
+                prompt="LCM expansion model",
+                current_model=args.lcm_expansion_model,
+                default_model=args.lcm_summary_model,
             )
+        if not args.install_ponytail:
+            args.install_ponytail = prompt_yes_no("Install strongly recommended Ponytail skill pack?", True, tui)
         if not args.generate_soul:
             args.generate_soul = prompt_yes_no("Generate SOUL.md with Hermes AI backend?", False, tui)
         if args.generate_soul:
@@ -1164,6 +1265,7 @@ def wizard(
         install_superpowers=args.install_superpowers,
         install_hmx_knowledge=args.install_hmx_knowledge,
         install_impeccable=args.install_impeccable,
+        install_ponytail=args.install_ponytail,
         hmx_knowledge_url=args.hmx_knowledge_url,
         generate_soul=args.generate_soul,
         soul_agent_name=args.soul_agent_name,

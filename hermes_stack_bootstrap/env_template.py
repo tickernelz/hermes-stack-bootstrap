@@ -92,7 +92,7 @@ def build_env_values(
     summary_model: str = "",
     lcm_summary_model: str = DEFAULT_LCM_SUMMARY_MODEL,
     lcm_expansion_model: str = "",
-    mnemosyne_mode: str = "full-local",
+    mnemosyne_mode: str = "hybrid",
     mnemosyne_host_llm_provider: str = "",
     mnemosyne_host_llm_model: str = "",
     mnemosyne_embedding_api_url: str = "",
@@ -110,7 +110,7 @@ def build_env_values(
 
     API keys are only included when explicitly supplied by the installer prompt or environment.
     """
-    mode = mnemosyne_mode.strip().lower() or "full-local"
+    mode = mnemosyne_mode.strip().lower() or "hybrid"
     if mode not in MNEMOSYNE_MODES:
         raise ValueError(f"Unknown Mnemosyne mode: {mnemosyne_mode}")
 

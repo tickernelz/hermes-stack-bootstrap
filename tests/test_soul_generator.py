@@ -14,27 +14,21 @@ from hermes_stack_bootstrap.soul_generator import (
 
 class SoulGeneratorTests(unittest.TestCase):
     def answers(self) -> SoulAnswers:
-        return SoulAnswers(
-            agent_name="Gatot",
-            user_name="Zhafron",
-            role="generalist senior operator",
-            behavior="direct, skeptical, useful",
-            communication="casual Indonesian, concise",
-            focus="software engineering and operations",
-            avoid="sycophancy, fake certainty, overengineering",
-            language="match user language",
-        )
+        return SoulAnswers(agent_name="Gatot", user_name="Zhafron")
 
-    def test_build_soul_prompt_includes_answers_and_hermes_boundaries(self):
+    def test_build_soul_prompt_includes_names_ponytail_style_and_hermes_boundaries(self):
         prompt = build_soul_prompt(self.answers())
 
         self.assertIn("Agent name: Gatot", prompt)
         self.assertIn("User name: Zhafron", prompt)
-        self.assertIn("software engineering and operations", prompt)
+        self.assertIn("Ponytail", prompt)
+        self.assertIn("lazy senior", prompt)
+        self.assertIn("YAGNI", prompt)
         self.assertIn("Output only the final SOUL.md Markdown", prompt)
         self.assertIn("Do not include project-specific commands", prompt)
         self.assertIn("API keys", prompt)
         self.assertIn("SOUL.md is Hermes' primary identity file", prompt)
+        self.assertNotIn("Agent role:", prompt)
 
     def test_sanitize_soul_markdown_strips_code_fences(self):
         raw = "```md\n# Identity\n\nGatot is direct.\n```\n"

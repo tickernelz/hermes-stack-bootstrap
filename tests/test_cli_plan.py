@@ -1,7 +1,9 @@
 import io
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from hermes_stack_bootstrap.cli import (
@@ -13,6 +15,8 @@ from hermes_stack_bootstrap.cli import (
     build_plan,
     build_plans,
     install_mnemosyne,
+    mnemosyne_packages_satisfied,
+    mnemosyne_runtime_needs_sudo,
     parse_profiles,
     print_plan,
     main,
@@ -20,6 +24,7 @@ from hermes_stack_bootstrap.cli import (
     wizard,
 )
 from hermes_stack_bootstrap.hermes_discovery import HermesRuntime
+from hermes_stack_bootstrap.hermes_models import ProviderChoice
 
 
 class FakeTui:
@@ -77,10 +82,14 @@ class CliPlanTests(unittest.TestCase):
 
         self.assertEqual(options.base_home, Path("/srv/hermes"))
         self.assertEqual(options.profile, "default")
+        self.assertEqual(options.mnemosyne_mode, "hybrid")
 
     def test_wizard_allows_manual_base_home_override(self):
-        tui = FakeTui(["/opt/hermes", "work", "full-local", "", "", False])
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
+        tui = FakeTui(["/opt/hermes", "work", "full-local", "", "", False, False])
+        with (
+            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
+            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
+        ):
             options = wizard([], ui=tui)
 
         self.assertEqual(options.base_home, Path("/opt/hermes"))
@@ -166,7 +175,7 @@ class CliPlanTests(unittest.TestCase):
             commands,
         )
         self.assertIn(
-            "/tmp/hermes/hermes-agent/venv/bin/python -m pip install --upgrade --no-cache-dir 'mnemosyne-memory[all]' sqlite-vec",
+            "/tmp/hermes/hermes-agent/venv/bin/python -m pip install --upgrade --no-cache-dir 'mnemosyne-memory[embeddings]' sqlite-vec",
             commands,
         )
         self.assertIn(
@@ -194,7 +203,7 @@ class CliPlanTests(unittest.TestCase):
         commands = [step.command for step in plan.steps if step.command]
 
         self.assertIn(
-            "/srv/shared/hermes/runtime/venv/bin/python -m pip install --upgrade --no-cache-dir 'mnemosyne-memory[all]' sqlite-vec",
+            "/srv/shared/hermes/runtime/venv/bin/python -m pip install --upgrade --no-cache-dir 'mnemosyne-memory[embeddings]' sqlite-vec",
             commands,
         )
         self.assertIn(
@@ -241,7 +250,11 @@ class CliPlanTests(unittest.TestCase):
         )
         plan = build_plan(options)
 
-        with patch("hermes_stack_bootstrap.cli.run_command") as run_command:
+        with (
+            patch("hermes_stack_bootstrap.cli.mnemosyne_packages_satisfied", return_value=False),
+            patch("hermes_stack_bootstrap.cli.mnemosyne_runtime_needs_sudo", return_value=False),
+            patch("hermes_stack_bootstrap.cli.run_command") as run_command,
+        ):
             install_mnemosyne(plan)
 
         pip_args = run_command.call_args_list[0].args[0]
@@ -262,6 +275,91 @@ class CliPlanTests(unittest.TestCase):
         )
         self.assertEqual(install_args[:3], [r"C:\Users\Nix\AppData\Local\hermes\hermes-agent\venv\Scripts\python", "-m", "mnemosyne.install"])
         self.assertEqual(run_command.call_args_list[1].kwargs["env"]["HERMES_HOME"], "C:/Users/Nix/AppData/Local/hermes")
+
+    def test_install_mnemosyne_skips_pip_when_packages_are_already_satisfied(self):
+        options = InstallerOptions(
+            base_home=Path("/tmp/hermes"),
+            profile="default",
+            yes=True,
+            dry_run=False,
+            mnemosyne_mode="hybrid",
+        )
+        plan = build_plan(options)
+
+        with (
+            patch("hermes_stack_bootstrap.cli.mnemosyne_packages_satisfied", return_value=True),
+            patch("hermes_stack_bootstrap.cli.run_command") as run_command,
+        ):
+            install_mnemosyne(plan)
+
+        commands = [call.args[0] for call in run_command.call_args_list]
+        self.assertEqual(commands, [[str(plan.options.hermes_python or Path("/tmp/hermes/hermes-agent/venv/bin/python")), "-m", "mnemosyne.install"]])
+        self.assertEqual(run_command.call_args_list[0].kwargs["env"]["HERMES_HOME"], "/tmp/hermes")
+
+    def test_install_mnemosyne_uses_sudo_when_shared_runtime_is_not_writable(self):
+        options = InstallerOptions(
+            base_home=Path("/tmp/hermes"),
+            profile="default",
+            yes=False,
+            dry_run=False,
+            hermes_python=Path("/opt/hermes/venv/bin/python"),
+            mnemosyne_mode="hybrid",
+        )
+        plan = build_plan(options)
+
+        with (
+            patch("hermes_stack_bootstrap.cli.mnemosyne_packages_satisfied", return_value=False),
+            patch("hermes_stack_bootstrap.cli.mnemosyne_runtime_needs_sudo", return_value=True),
+            patch("hermes_stack_bootstrap.cli.run_command") as run_command,
+        ):
+            install_mnemosyne(plan)
+
+        self.assertEqual(run_command.call_args_list[0].args[0], ["sudo", "-v"])
+        self.assertEqual(
+            run_command.call_args_list[1].args[0],
+            ["sudo", "/opt/hermes/venv/bin/python", "-m", "pip", "install", "--upgrade", "--no-cache-dir", "mnemosyne-memory[embeddings]", "sqlite-vec"],
+        )
+
+    def test_install_mnemosyne_fails_actionably_when_sudo_needed_noninteractive(self):
+        options = InstallerOptions(
+            base_home=Path("/tmp/hermes"),
+            profile="default",
+            yes=True,
+            dry_run=False,
+            hermes_python=Path("/opt/hermes/venv/bin/python"),
+            mnemosyne_mode="hybrid",
+        )
+        plan = build_plan(options)
+
+        with (
+            patch("hermes_stack_bootstrap.cli.mnemosyne_packages_satisfied", return_value=False),
+            patch("hermes_stack_bootstrap.cli.mnemosyne_runtime_needs_sudo", return_value=True),
+        ):
+            with self.assertRaisesRegex(PermissionError, "sudo /opt/hermes/venv/bin/python -m pip install"):
+                install_mnemosyne(plan)
+
+    def test_mnemosyne_packages_satisfied_parses_pip_dry_run_report(self):
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        with (
+            patch("subprocess.run", return_value=completed),
+            patch("tempfile.NamedTemporaryFile") as named_tmp,
+            patch("pathlib.Path.read_text", return_value='{\"install\": []}'),
+        ):
+            named_tmp.return_value.__enter__.return_value.name = "/tmp/report.json"
+            self.assertTrue(mnemosyne_packages_satisfied(Path("/venv/bin/python"), ["mnemosyne-memory[embeddings]", "sqlite-vec"]))
+
+    def test_mnemosyne_runtime_needs_sudo_detects_non_writable_runtime_paths(self):
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout='["/opt/hermes/venv/lib/python/site-packages", "/opt/hermes/venv/bin"]',
+            stderr="",
+        )
+        with (
+            patch("subprocess.run", return_value=completed),
+            patch("os.access", return_value=False),
+        ):
+            self.assertTrue(mnemosyne_runtime_needs_sudo(Path("/opt/hermes/venv/bin/python")))
 
     def test_build_plan_uses_mode_specific_mnemosyne_install_commands(self):
         hybrid = InstallerOptions(
@@ -339,10 +437,11 @@ class CliPlanTests(unittest.TestCase):
             hermes_python=None,
             hermes_python_source="not found",
         )
-        tui = FakeTui([None, "Skip Mnemosyne", None, "", "", False])
+        tui = FakeTui([None, "Skip Mnemosyne", None, "", "", False, False])
         with (
             patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/home/lutfi22/.hermes")),
             patch("hermes_stack_bootstrap.cli.discover_hermes_runtime", return_value=missing_runtime),
+            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
         ):
             options = wizard([], ui=tui)
 
@@ -362,10 +461,11 @@ class CliPlanTests(unittest.TestCase):
             runtime_python.parent.mkdir(parents=True)
             runtime_python.write_text("#!/bin/sh\n", encoding="utf-8")
             runtime_python.chmod(0o755)
-            tui = FakeTui([None, "Paste runtime Python path", str(runtime_python), None, "hybrid", "", "", "", "", False])
+            tui = FakeTui([None, "Paste runtime Python path", str(runtime_python), None, "hybrid", "", "", False, False])
             with (
                 patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/home/lutfi22/.hermes")),
                 patch("hermes_stack_bootstrap.cli.discover_hermes_runtime", return_value=missing_runtime),
+                patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
             ):
                 options = wizard([], ui=tui)
 
@@ -397,6 +497,37 @@ class CliPlanTests(unittest.TestCase):
         self.assertEqual(options.lcm_summary_model, "openrouter/google/gemini-2.5-flash")
         self.assertEqual(options.lcm_expansion_model, "openrouter/anthropic/claude-sonnet-4")
 
+    def test_wizard_picks_mnemosyne_and_lcm_models_from_detected_hermes_providers(self):
+        providers = [
+            ProviderChoice("openrouter", "OpenRouter — 2 models", ("anthropic/claude-sonnet-4", "google/gemini-3-flash")),
+            ProviderChoice("custom:lokal", "Lokal — 1 model", ("gpt-5.4-mini",)),
+        ]
+        tui = FakeTui([
+            None,  # base home
+            None,  # profiles
+            "hybrid",
+            "OpenRouter — 2 models",
+            "anthropic/claude-sonnet-4",
+            "google/gemini-3-flash",
+            None,  # expansion same as summary
+            False,
+            False,
+        ])
+        with (
+            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
+            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=providers),
+        ):
+            options = wizard([], ui=tui)
+
+        self.assertEqual(options.mnemosyne_host_llm_provider, "openrouter")
+        self.assertEqual(options.mnemosyne_host_llm_model, "anthropic/claude-sonnet-4")
+        self.assertEqual(options.lcm_summary_model, "google/gemini-3-flash")
+        self.assertEqual(options.lcm_expansion_model, "google/gemini-3-flash")
+        select_prompts = [event[1] for event in tui.events if event[0] == "select"]
+        self.assertIn("Mnemosyne host LLM provider", select_prompts)
+        self.assertIn("Mnemosyne host LLM model", select_prompts)
+        self.assertIn("LCM summary model", select_prompts)
+
     def test_wizard_accepts_full_online_embedding_options_from_environment(self):
         with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
             options = wizard(
@@ -424,8 +555,6 @@ class CliPlanTests(unittest.TestCase):
             None,
             None,
             "full-online",
-            "openrouter",
-            "gpt-5.1-mini",
             "https://embeddings.example/v1",
             "secret-from-prompt",
             "text-embedding-3-small",
@@ -433,8 +562,12 @@ class CliPlanTests(unittest.TestCase):
             "",
             "",
             False,
+            False,
         ])
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
+        with (
+            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
+            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
+        ):
             options = wizard([], env={}, ui=tui)
 
         self.assertIn(("password", "Mnemosyne embedding API key (hidden; empty if endpoint needs no key)"), tui.events)
@@ -536,6 +669,7 @@ class CliPlanTests(unittest.TestCase):
             install_superpowers=True,
             install_hmx_knowledge=True,
             install_impeccable=True,
+            install_ponytail=True,
         )
 
         plan = build_plan(options)
@@ -553,6 +687,29 @@ class CliPlanTests(unittest.TestCase):
             "git clone --depth=1 https://github.com/pbakaus/impeccable /tmp/hermes/skills/vendor/impeccable",
             commands,
         )
+        self.assertIn(
+            "git clone --depth=1 https://github.com/DietrichGebert/ponytail /tmp/hermes/skills/vendor/ponytail",
+            commands,
+        )
+
+    def test_interactive_wizard_recommends_ponytail_by_default(self):
+        tui = FakeTui([
+            None,
+            None,
+            "hybrid",
+            None,  # no lcm summary override
+            None,  # no lcm expansion override
+            None,  # recommended Ponytail default accepted
+            False,  # no SOUL
+        ])
+        with (
+            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
+            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
+        ):
+            options = wizard([], ui=tui)
+
+        self.assertTrue(options.install_ponytail)
+        self.assertIn(("confirm", "Install strongly recommended Ponytail skill pack?", True), tui.events)
 
     def test_wizard_accepts_noninteractive_soul_generation_options(self):
         with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
@@ -564,18 +721,6 @@ class CliPlanTests(unittest.TestCase):
                     "Gatot",
                     "--soul-user-name",
                     "Zhafron",
-                    "--soul-role",
-                    "generalist senior operator",
-                    "--soul-behavior",
-                    "direct, skeptical, useful",
-                    "--soul-communication",
-                    "casual Indonesian, concise",
-                    "--soul-focus",
-                    "software engineering and operations",
-                    "--soul-avoid",
-                    "sycophancy and fake certainty",
-                    "--soul-language",
-                    "match user language",
                     "--soul-provider",
                     "openrouter",
                     "--soul-model",
@@ -595,35 +740,28 @@ class CliPlanTests(unittest.TestCase):
         tui = FakeTui([
             None,
             None,
-            "full-local",
-            "",
-            "",
+            "hybrid",
+            None,
+            None,
+            None,
             True,
             "Gatot",
             "Zhafron",
-            "generalist senior operator",
-            "direct, skeptical, useful",
-            "casual Indonesian, concise",
-            "software engineering and operations",
-            "sycophancy and fake certainty",
-            "match user language",
-            "openrouter",
-            "anthropic/claude-sonnet-4",
         ])
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
+        with (
+            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
+            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
+        ):
             options = wizard([], ui=tui)
 
         self.assertTrue(options.generate_soul)
         self.assertEqual(options.soul_agent_name, "Gatot")
         self.assertEqual(options.soul_user_name, "Zhafron")
-        self.assertEqual(options.soul_role, "generalist senior operator")
-        self.assertEqual(options.soul_behavior, "direct, skeptical, useful")
-        self.assertEqual(options.soul_communication, "casual Indonesian, concise")
-        self.assertEqual(options.soul_focus, "software engineering and operations")
-        self.assertEqual(options.soul_avoid, "sycophancy and fake certainty")
-        self.assertEqual(options.soul_language, "match user language")
-        self.assertEqual(options.soul_provider, "openrouter")
-        self.assertEqual(options.soul_model, "anthropic/claude-sonnet-4")
+        text_prompts = [event[1] for event in tui.events if event[0] == "text"]
+        self.assertIn("Agent name", text_prompts)
+        self.assertIn("User name", text_prompts)
+        self.assertNotIn("Agent role", text_prompts)
+        self.assertNotIn("Behavior / personality", text_prompts)
 
     def test_wizard_rejects_noninteractive_generate_soul_when_required_answers_missing(self):
         with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
