@@ -1,6 +1,6 @@
 import unittest
 
-from hermes_stack_bootstrap.config_merge import build_target_config
+from hermes_stack_bootstrap.config_merge import ALL_FALLBACK_TELEGRAM_TOOLSETS, build_target_config
 
 
 class ConfigMergeTests(unittest.TestCase):
@@ -54,10 +54,10 @@ class ConfigMergeTests(unittest.TestCase):
             ["web", "browser", "terminal", "memory"],
         )
 
-    def test_build_target_config_falls_back_to_full_cli_toolset_when_no_cli_toolsets_exist(self):
+    def test_build_target_config_falls_back_to_all_toolsets_when_no_cli_toolsets_exist(self):
         merged = build_target_config({})
 
-        self.assertEqual(merged["platform_toolsets"]["telegram"], ["hermes-cli", "memory"])
+        self.assertEqual(merged["platform_toolsets"]["telegram"], list(ALL_FALLBACK_TELEGRAM_TOOLSETS))
 
     def test_build_target_config_repairs_legacy_memory_only_telegram_toolset(self):
         existing = {
@@ -69,6 +69,13 @@ class ConfigMergeTests(unittest.TestCase):
         second = build_target_config(first)
 
         self.assertEqual(second["platform_toolsets"]["telegram"], ["web", "terminal", "memory"])
+
+    def test_build_target_config_repairs_legacy_memory_only_telegram_toolset_with_all_toolsets_when_no_cli_exists(self):
+        existing = {"platform_toolsets": {"telegram": ["memory"]}}
+
+        merged = build_target_config(existing)
+
+        self.assertEqual(merged["platform_toolsets"]["telegram"], list(ALL_FALLBACK_TELEGRAM_TOOLSETS))
 
     def test_build_target_config_keeps_existing_rich_telegram_toolset_idempotent(self):
         existing = {"platform_toolsets": {"telegram": ["file", "memory"]}}

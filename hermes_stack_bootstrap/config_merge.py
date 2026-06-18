@@ -25,6 +25,45 @@ DEFAULT_COMPRESSION = {
     "protect_last_n": 72,
 }
 
+# Explicit fallback for a fresh Telegram platform config when neither CLI nor
+# top-level toolset selections exist. Keep this as toolset names, not tool
+# names: `platform_toolsets.<platform>` is an allowlist of toolsets.
+ALL_FALLBACK_TELEGRAM_TOOLSETS = (
+    "web",
+    "search",
+    "x_search",
+    "vision",
+    "video",
+    "image_gen",
+    "video_gen",
+    "computer_use",
+    "terminal",
+    "moa",
+    "skills",
+    "browser",
+    "cronjob",
+    "file",
+    "code_execution",
+    "tts",
+    "todo",
+    "memory",
+    "context_engine",
+    "session_search",
+    "clarify",
+    "delegation",
+    "homeassistant",
+    "kanban",
+    "discord",
+    "discord_admin",
+    "yuanbao",
+    "feishu_doc",
+    "feishu_drive",
+    "spotify",
+    "debugging",
+    "safe",
+    "coding",
+)
+
 
 def _ensure_mapping(value: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
@@ -51,7 +90,7 @@ def _telegram_seed_toolsets(cfg: dict[str, Any], platform_toolsets: dict[str, An
     if not seed:
         seed = _ensure_list(cfg.get("toolsets"))
     if not seed:
-        seed = ["hermes-cli"]
+        seed = list(ALL_FALLBACK_TELEGRAM_TOOLSETS)
     return seed
 
 
@@ -61,7 +100,7 @@ def _telegram_toolsets_for(cfg: dict[str, Any], platform_toolsets: dict[str, Any
     Adding only ``memory`` creates an explicit Telegram override and disables the
     broad default ``hermes-telegram`` tool universe. When Telegram has no saved
     selection yet, seed it from the CLI selection first, then top-level
-    ``toolsets``, and finally the full ``hermes-cli`` composite.
+    ``toolsets``, and finally all known toolsets.
     """
     if "telegram" in platform_toolsets:
         existing = _ensure_list(platform_toolsets.get("telegram"))
