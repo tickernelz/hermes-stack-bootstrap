@@ -1,18 +1,15 @@
 # Hermes Stack Bootstrap
 
-Opinionated bootstrapper for a small [Hermes Agent](https://hermes-agent.nousresearch.com/) stack:
+![Hermes Stack Bootstrap banner](assets/banner.png)
 
-- [`hermes-lcm`](https://github.com/stephenschoettler/hermes-lcm) for long-context conversation memory/compression
-- [`mnemosyne-memory`](https://github.com/AxDSan/mnemosyne) as the Hermes memory provider, selectable as full-local, hybrid, or full-online
-- [`hermes-progress-tail`](https://github.com/tickernelz/hermes-progress-tail) for live progress/status bubbles
+Small, safe bootstrapper for a focused [Hermes Agent](https://hermes-agent.nousresearch.com/) stack:
 
-Optional skill packs can also be installed:
+- [`hermes-lcm`](https://github.com/stephenschoettler/hermes-lcm) for long-context compression.
+- [`mnemosyne-memory`](https://github.com/AxDSan/mnemosyne) for persistent memory.
+- [`hermes-progress-tail`](https://github.com/tickernelz/hermes-progress-tail) for live progress/status bubbles.
+- Optional skill packs: [`obra/superpowers`](https://github.com/obra/superpowers), [`pbakaus/impeccable`](https://github.com/pbakaus/impeccable), [`DietrichGebert/ponytail`](https://github.com/DietrichGebert/ponytail), and a private HMX knowledge repo.
 
-- [`obra/superpowers`](https://github.com/obra/superpowers)
-- private HMX knowledge repo (`git@gitlab.com:hashmicro1/hmx/hmx-knowledge.git` by default)
-- [`pbakaus/impeccable`](https://github.com/pbakaus/impeccable)
-
-The goal is a safe copy-paste installer that guides users through the same stack without asking them to copy someone else's private `config.yaml` or `.env`.
+It installs the stack into your own Hermes profile. It does **not** ask you to copy someone else's `config.yaml` or `.env`.
 
 ## Quick install
 
@@ -26,9 +23,7 @@ Dry run first:
 curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/main/install.sh | bash -s -- --dry-run
 ```
 
-`curl | bash` works in interactive mode: the shell wrapper reattaches the Python TUI to `/dev/tty` when stdin is the curl pipe. Interactive mode is TUI-only and uses `Rich` + `prompt_toolkit`; `install.sh` automatically bootstraps `PyYAML`, `Rich`, and `prompt_toolkit` into the selected Hermes runtime Python before launching the wizard. If that dependency bootstrap fails, the installer exits with the exact manual `python -m pip install ...` command to run.
-
-Inspect first:
+Inspect before running:
 
 ```bash
 curl -fsSLO https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/main/install.sh
@@ -37,89 +32,57 @@ bash install.sh --dry-run
 bash install.sh
 ```
 
-## What it installs
+Interactive mode is TUI-only (`Rich` + `prompt_toolkit`). `install.sh` bootstraps `PyYAML`, `Rich`, and `prompt_toolkit` into the selected Hermes runtime Python before launching the wizard. `curl | bash` is supported; the installer reattaches prompts to `/dev/tty` when stdin is the curl pipe.
 
-| Component | Install method | Notes |
+## What it changes
+
+The installer makes a narrow, reviewable merge into the selected Hermes profile:
+
+- enables `hermes-lcm` and `mnemosyne`
+- sets `context.engine: lcm`
+- sets Mnemosyne as the memory provider
+- writes LCM/Mnemosyne defaults for the selected memory mode
+- seeds Telegram toolsets from CLI/top-level toolsets, or from all known toolsets when no CLI toolset exists, then appends `memory`
+- optionally installs selected skill packs
+- optionally generates `SOUL.md` through your configured Hermes backend
+
+It does **not** write tokens, provider keys, Telegram bot tokens, private keys, dashboard secrets, or embedding API credentials unless you explicitly provide them during the install run.
+
+Existing `config.yaml`, `.env`, and `SOUL.md` are backed up before non-dry-run writes. Hermes is not restarted automatically.
+
+## Components
+
+| Component | How it installs | Notes |
 |---|---|---|
-| `hermes-lcm` | clones/updates `https://github.com/stephenschoettler/hermes-lcm` into the selected Hermes plugin directory | follows the upstream repo layout |
-| `mnemosyne-memory` | installs mode-specific Mnemosyne package set into the Hermes runtime venv | default `hybrid`; `full-local` and `full-online` are available |
-| `hermes-progress-tail` | runs the upstream `install.sh` from the latest GitHub release | can be pinned with `--progress-tail-ref` |
-| `SOUL.md` generation | optional one-shot `hermes chat -q` call through the user's configured Hermes backend | interactive mode asks only agent name + user name |
-| `obra/superpowers` | optional `git clone --depth=1` into `skills/vendor/obra-superpowers` | enable with `--install-superpowers` |
-| HMX knowledge | optional clone into `skills/vendor/hmx-knowledge` | private repo; user must already have SSH/token access |
-| `pbakaus/impeccable` | optional `git clone --depth=1` into `skills/vendor/impeccable` | enable with `--install-impeccable` |
-| `DietrichGebert/ponytail` | optional, strongly recommended `git clone --depth=1` into `skills/vendor/ponytail` | interactive default is yes; non-interactive flag is `--install-ponytail` |
+| `hermes-lcm` | clones/updates plugin repo | upstream layout preserved |
+| `mnemosyne-memory` | installs package set into Hermes runtime Python | default mode: `hybrid` |
+| `hermes-progress-tail` | runs upstream release installer | pin with `--progress-tail-ref` |
+| `SOUL.md` | optional `hermes chat -q` generation | asks only agent name + user name |
+| `superpowers` | optional shallow clone | `--install-superpowers` |
+| `impeccable` | optional shallow clone | `--install-impeccable` |
+| `ponytail` | optional shallow clone | interactive default: yes; flag: `--install-ponytail` |
+| HMX knowledge | optional clone | private repo; user must already have access |
 
-## Safety model
+## Runtime and profile detection
 
-This project intentionally does **not** publish or copy a full Hermes profile.
+The installer keeps three paths separate:
 
-It only merges a small, reviewable set of config/env values:
+| Path | Meaning |
+|---|---|
+| Hermes profile base | user-owned profile tree: config, env, skills, SOUL |
+| Hermes CLI | executable used for discovery, verification, and `SOUL.md` generation |
+| Hermes runtime Python | Python env where Mnemosyne packages must be installed |
 
-- enables the required plugins
-- switches context engine to LCM
-- configures Mnemosyne as the memory provider
-- seeds Telegram toolsets from the CLI/top-level toolset selection, or from all known toolsets when no CLI selection exists, then appends `memory`, so Telegram keeps broad tool access while Mnemosyne tools are available there
-- writes LCM/Mnemosyne defaults for the selected mode
-- writes Mnemosyne embedding API credentials only when the user supplies them during the install run
-- optionally writes `SOUL.md` only when `--generate-soul` is enabled or the interactive wizard asks and the user agrees
+Detection order:
 
-It does **not** write tokens, passwords, private keys, provider API keys, Telegram bot tokens, dashboard secrets, private endpoint credentials, or Mnemosyne embedding API credentials unless the user explicitly provides them to the installer.
+1. explicit flags/env: `--home`, `--hermes-bin`, `--hermes-python`, `HERMES_HOME`, `HERMES_BIN`, `HERMES_STACK_PYTHON`
+2. `hermes config path`
+3. every `hermes` executable in `$PATH`
+4. Python inferred from launcher realpath, shebang, sibling venv, or shell wrapper `exec ".../venv/bin/hermes" "$@"`
+5. profile-local `hermes-agent/venv/bin/python`
+6. bounded filesystem scan for an executable named `hermes`
 
-Existing files are backed up before non-dry-run writes.
-
-Hermes is **not restarted automatically**. Restart manually after reviewing the result.
-
-## Hermes home, runtime, and profile detection
-
-The installer keeps profile files separate from the Hermes runtime:
-
-| Path | What it means | Typical examples |
-|---|---|---|
-| Hermes profile base | user-owned config/env/SOUL/profile tree | `~/.hermes`, `/home/lutfi22/.hermes` |
-| Hermes CLI | executable used for config discovery, verification, and SOUL generation | `hermes`, `/usr/local/bin/hermes`, `/srv/hermes/venv/bin/hermes` |
-| Hermes runtime Python | Python environment where Mnemosyne dependencies are installed | `~/.hermes/hermes-agent/venv/bin/python`, `/srv/shared/hermes/venv/bin/python` |
-
-This supports shared servers where Hermes itself is installed globally while each user keeps a private profile under `~/.hermes`.
-
-Profile base detection order:
-
-1. `--home`
-2. `HERMES_HOME`
-3. `hermes config path` from the selected Hermes CLI
-4. `~/.hermes`
-
-Hermes CLI / runtime detection order:
-
-1. `--hermes-bin` / `HERMES_BIN` and `--hermes-python` / `HERMES_STACK_PYTHON`
-2. every executable named `hermes` in `$PATH`
-3. Python inferred from the selected Hermes executable's realpath/sibling venv or shebang
-4. profile-local `hermes-agent/venv/bin/python`
-5. bounded filesystem scan for executable files named `hermes`
-
-Runtime discovery also understands common Hermes shell wrappers such as:
-
-```bash
-#!/usr/bin/env bash
-exec "/path/to/hermes-agent/venv/bin/hermes" "$@"
-```
-
-In that case it follows the `exec` target and uses the sibling `python` / `python3` from the same venv. If runtime Python still cannot be found in interactive mode, the wizard now stops early and lets the user either paste the Python path or skip Mnemosyne for that run instead of failing after all prompts.
-
-The filesystem scan is deliberately bounded and prunes pseudo/noisy trees such as `/proc`, `/sys`, `/dev`, `/run`, `/tmp`, `/mnt`, and `/media`. It searches for an executable named `hermes`; it does **not** assume `/opt` or any other fixed install directory.
-
-On Git Bash/MINGW64, the plan preview normalizes native Windows drive paths (`C:\\Users\\...`) to Git Bash-style paths (`/c/Users/...`) so copy-pasted preview commands are readable and executable. Actual Python package installs use subprocess argument vectors instead of `shell=True`, so Windows Python paths are not broken by POSIX quoting or `cmd.exe` single-quote behavior.
-
-Interactive mode lets you override the detected profile base manually. For explicit shared-runtime installs:
-
-```bash
-HERMES_HOME=/home/lutfi22/.hermes \
-HERMES_BIN=/usr/local/bin/hermes \
-HERMES_STACK_PYTHON=/srv/shared/hermes/venv/bin/python \
-  bash install.sh
-```
-
-or:
+Shared runtime example:
 
 ```bash
 bash install.sh \
@@ -128,64 +91,45 @@ bash install.sh \
   --hermes-python /srv/shared/hermes/venv/bin/python
 ```
 
-Named profiles are supported. For example, profile `work` maps to:
+Named profiles are supported. `--profile work` targets:
 
 ```text
 <hermes-home>/profiles/work
 ```
 
-Multiple profiles are supported in one invocation by repeating `--profile` or passing comma-separated names. They run sequentially, not in parallel, to keep backups and command output readable.
-
-## Common commands
-
-Run the wizard:
-
-```bash
-bash install.sh
-```
-
-Dry run without writing files:
-
-```bash
-bash install.sh --dry-run
-```
-
-Run non-interactively against the detected Hermes home:
-
-```bash
-bash install.sh --yes
-```
-
-Target a custom Hermes profile home:
-
-```bash
-bash install.sh --home /home/lutfi22/.hermes
-```
-
-Target a shared/global Hermes runtime explicitly:
-
-```bash
-bash install.sh \
-  --home /home/lutfi22/.hermes \
-  --hermes-bin /usr/local/bin/hermes \
-  --hermes-python /srv/shared/hermes/venv/bin/python
-```
-
-Target one named profile:
-
-```bash
-bash install.sh --profile work
-```
-
-Target multiple profiles in one run. The installer applies them sequentially, one profile-scoped plan at a time:
+Multiple profiles run sequentially:
 
 ```bash
 bash install.sh --profile default,work,client
-# equivalent:
-bash install.sh --profile default --profile work --profile client
 ```
 
-Set LCM summary and expansion models explicitly from Hermes' available providers/models:
+## Common commands
+
+```bash
+# wizard
+bash install.sh
+
+# no writes
+bash install.sh --dry-run
+
+# non-interactive defaults
+bash install.sh --yes
+
+# skip one component
+bash install.sh --skip-lcm
+bash install.sh --skip-mnemosyne
+bash install.sh --skip-progress-tail
+
+# optional skills
+bash install.sh --install-superpowers
+bash install.sh --install-impeccable
+bash install.sh --install-ponytail
+
+# pin progress-tail
+bash install.sh --progress-tail-ref v0.1.81
+```
+
+LCM model overrides are optional. Empty values let Hermes resolve `auxiliary.compression`.
 
 ```bash
 bash install.sh \
@@ -193,26 +137,29 @@ bash install.sh \
   --lcm-expansion-model openrouter/anthropic/claude-sonnet-4
 ```
 
-Leave them empty to let Hermes resolve `auxiliary.compression`. The old `--summary-model` flag is still accepted as a backward-compatible alias that sets both LCM models.
+## Mnemosyne modes
 
-Choose a Mnemosyne mode:
+| Mode | Embeddings | LLM consolidation | Packages |
+|---|---|---|---|
+| `hybrid` | local `fastembed` | Hermes host LLM | `mnemosyne-memory[embeddings] sqlite-vec` |
+| `full-local` | local `fastembed` | local GGUF | `mnemosyne-memory[all] sqlite-vec` |
+| `full-online` | remote embedding API | Hermes host LLM | `mnemosyne-memory sqlite-vec numpy` |
+
+Default:
 
 ```bash
-# Default: hybrid local embeddings + Hermes provider/model for Mnemosyne LLM consolidation
+bash install.sh --mnemosyne-mode hybrid
+```
+
+Choose Hermes provider/model for Mnemosyne consolidation:
+
+```bash
 bash install.sh --mnemosyne-mode hybrid \
-  --mnemosyne-llm-provider openrouter \
-  --mnemosyne-llm-model anthropic/claude-sonnet-4
-
-# Full local: local embeddings + local GGUF LLM consolidation
-bash install.sh --mnemosyne-mode full-local
-
-# Full online: Hermes provider/model for Mnemosyne LLM; installer also asks for embedding API URL/key/model/dim in interactive mode
-bash install.sh --mnemosyne-mode full-online \
   --mnemosyne-llm-provider openrouter \
   --mnemosyne-llm-model anthropic/claude-sonnet-4
 ```
 
-For non-interactive full-online installs, put the embedding API key in the environment rather than a CLI flag:
+For `full-online`, pass embedding secrets through env, not CLI flags:
 
 ```bash
 MNEMOSYNE_EMBEDDING_API_URL=https://your-embedding-endpoint/v1 \
@@ -224,13 +171,17 @@ MNEMOSYNE_EMBEDDING_DIM=1536 \
     --mnemosyne-llm-model anthropic/claude-sonnet-4
 ```
 
-Generate `SOUL.md` once through the user's configured Hermes AI backend:
+The dry-run preview redacts `MNEMOSYNE_EMBEDDING_API_KEY`. When switching modes, bootstrapper-managed stale keys are removed; unrelated user keys are preserved.
+
+## SOUL.md generation
+
+Generate once through your configured Hermes backend:
 
 ```bash
 bash install.sh --generate-soul
 ```
 
-Non-interactive example:
+Non-interactive:
 
 ```bash
 bash install.sh --yes --generate-soul \
@@ -238,7 +189,7 @@ bash install.sh --yes --generate-soul \
   --soul-user-name Zhafron
 ```
 
-Use the user's Hermes default provider/model by default. Optional override:
+Optional provider/model override:
 
 ```bash
 bash install.sh --generate-soul \
@@ -246,45 +197,11 @@ bash install.sh --generate-soul \
   --soul-model anthropic/claude-sonnet-4
 ```
 
-If `SOUL.md` already exists, interactive mode asks before overwrite; non-interactive mode requires `--soul-overwrite`. Existing `SOUL.md` is backed up before replacement. If the Hermes backend call fails, the installer fails and does not write `SOUL.md`.
+If `SOUL.md` exists, interactive mode asks before overwrite. Non-interactive mode requires `--soul-overwrite`. A failed model call does not write a partial file.
 
-Pin a specific progress-tail release instead of the latest release:
+## Config shape
 
-```bash
-bash install.sh --progress-tail-ref v0.1.81
-```
-
-Skip one component:
-
-```bash
-bash install.sh --skip-lcm
-bash install.sh --skip-mnemosyne
-bash install.sh --skip-progress-tail
-```
-
-Install optional skill packs:
-
-```bash
-bash install.sh --install-superpowers
-bash install.sh --install-impeccable
-bash install.sh --install-ponytail
-```
-
-Install the private HMX knowledge repo:
-
-```bash
-# Recommended: SSH access via ssh-agent
-bash install.sh --install-hmx-knowledge
-
-# Or override the repo URL if your org uses a different clone URL.
-# Prefer a git credential helper or GIT_ASKPASS for tokens; do not paste tokens into shell history.
-HMX_KNOWLEDGE_GIT_URL=https://gitlab.com/hashmicro1/hmx/hmx-knowledge.git \
-  bash install.sh --install-hmx-knowledge
-```
-
-## Config changes
-
-The config merge is intentionally narrow. In simplified form, it ensures:
+Simplified target config:
 
 ```yaml
 plugins:
@@ -317,82 +234,20 @@ platform_toolsets:
     - memory
 ```
 
-Unrelated config keys are preserved.
-
-If `platform_toolsets.telegram` already exists, the installer preserves it and only appends `memory` if missing. If Telegram has no explicit toolset list, the installer copies `platform_toolsets.cli`; if that is missing, it copies top-level `toolsets`; if neither exists, it seeds Telegram with every known toolset plus `memory`. A legacy `[memory]`-only Telegram list from older bootstrapper runs is treated as broken and repaired the same way. This avoids the bad override that would make Telegram sessions lose normal tools like terminal, file, browser, and web.
-
-If the discovered runtime Python is globally installed but not writable by the current user, ask the server admin to preinstall Mnemosyne into that runtime, run the installer with appropriate privileges, or use `--skip-mnemosyne` if Mnemosyne is already installed. The installer will not silently install Mnemosyne into an unrelated user Python because Hermes would not see it.
-
-## SOUL.md generation
-
-`SOUL.md` is Hermes' primary identity file. The installer can generate it once by calling the user's own Hermes backend with `hermes chat -q`; no bootstrapper API key or fallback generation mode is used.
-
-Interactive mode asks for:
-
-- agent name
-- user name
-- agent role
-- behavior/personality
-- communication style
-- main focus
-- things to avoid
-- default language
-- optional provider/model override for the generation call
-
-The generated file targets:
-
-```text
-<hermes-profile>/SOUL.md
-```
-
-The prompt follows Hermes' documented boundary: `SOUL.md` should contain stable identity, tone, communication defaults, judgment posture, broad execution defaults, domain focus, and boundaries. It should not contain project-specific commands, paths, repo workflows, API keys, provider secrets, or temporary setup notes.
-
-Dry runs show that generation would happen but do not call the model. Real runs fail hard if the Hermes backend call fails; they do not fall back to a template and do not write partial output.
-
-## Environment defaults
-
-It writes the selected profile's `.env` during the same install run. For secrets, prefer the interactive wizard: it prompts with hidden input so API keys do not land in shell history. In non-interactive mode, pass secrets through environment variables, not CLI flags.
-
-### LCM
+Important `.env` defaults:
 
 ```env
 LCM_ENABLE_SLASH_COMMAND=1
 LCM_CONTEXT_THRESHOLD=0.8
 LCM_FRESH_TAIL_COUNT=72
-LCM_LARGE_OUTPUT_EXTERNALIZATION_ENABLED=true
-LCM_LARGE_OUTPUT_EXTERNALIZATION_THRESHOLD_CHARS=12000
-LCM_LARGE_OUTPUT_TRANSCRIPT_GC_ENABLED=true
 LCM_EXPANSION_CONTEXT_TOKENS=128000
 LCM_SUMMARY_TIMEOUT_MS=180000
 LCM_EXPANSION_TIMEOUT_MS=240000
-```
+LCM_LARGE_OUTPUT_EXTERNALIZATION_ENABLED=true
+LCM_LARGE_OUTPUT_EXTERNALIZATION_THRESHOLD_CHARS=12000
+LCM_LARGE_OUTPUT_TRANSCRIPT_GC_ENABLED=true
 
-By default, the installer does **not** write `LCM_SUMMARY_MODEL` or `LCM_EXPANSION_MODEL`; LCM will use Hermes' `auxiliary.compression` resolution. Set them with `--lcm-summary-model` and `--lcm-expansion-model` if you want explicit provider/model names.
-
-### Mnemosyne
-
-The wizard exposes three modes:
-
-| Mode | Embeddings | LLM consolidation | Package install |
-|---|---|---|---|
-| `full-local` | local fastembed | local MiniCPM5 GGUF | `mnemosyne-memory[all] sqlite-vec` |
-| `hybrid` | local fastembed | Hermes host LLM provider/model | `mnemosyne-memory[embeddings] sqlite-vec` |
-| `full-online` | embedding API/model captured during install or from env | Hermes host LLM provider/model | `mnemosyne-memory sqlite-vec numpy` |
-
-#### `full-local` env
-
-```env
 MNEMOSYNE_DATA_DIR=<hermes-profile>/mnemosyne/data
-MNEMOSYNE_FORCE_LOCAL=1
-MNEMOSYNE_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
-MNEMOSYNE_EMBEDDING_DIM=384
-MNEMOSYNE_VEC_TYPE=int8
-MNEMOSYNE_LLM_ENABLED=true
-MNEMOSYNE_LLM_REPO=openbmb/MiniCPM5-1B-GGUF
-MNEMOSYNE_LLM_FILE=MiniCPM5-1B-Q4_K_M.gguf
-MNEMOSYNE_LLM_N_CTX=2048
-MNEMOSYNE_LLM_MAX_TOKENS=2048
-MNEMOSYNE_LLM_N_THREADS=4
 MNEMOSYNE_WM_MAX_ITEMS=10000
 MNEMOSYNE_WM_TTL_HOURS=48
 MNEMOSYNE_EP_LIMIT=50000
@@ -400,44 +255,6 @@ MNEMOSYNE_SLEEP_BATCH=3000
 MNEMOSYNE_SP_MAX=1000
 MNEMOSYNE_RECENCY_HALFLIFE=168
 ```
-
-#### `hybrid` env
-
-```env
-MNEMOSYNE_DATA_DIR=<hermes-profile>/mnemosyne/data
-MNEMOSYNE_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
-MNEMOSYNE_EMBEDDING_DIM=384
-MNEMOSYNE_VEC_TYPE=int8
-MNEMOSYNE_LLM_ENABLED=true
-MNEMOSYNE_LLM_MAX_TOKENS=2048
-MNEMOSYNE_HOST_LLM_ENABLED=true
-MNEMOSYNE_HOST_LLM_N_CTX=32000
-# Optional when supplied:
-MNEMOSYNE_HOST_LLM_PROVIDER=<hermes-provider>
-MNEMOSYNE_HOST_LLM_MODEL=<hermes-model>
-```
-
-#### `full-online` env
-
-```env
-MNEMOSYNE_DATA_DIR=<hermes-profile>/mnemosyne/data
-MNEMOSYNE_LLM_ENABLED=true
-MNEMOSYNE_LLM_MAX_TOKENS=2048
-MNEMOSYNE_HOST_LLM_ENABLED=true
-MNEMOSYNE_HOST_LLM_N_CTX=32000
-# Optional when supplied:
-MNEMOSYNE_HOST_LLM_PROVIDER=<hermes-provider>
-MNEMOSYNE_HOST_LLM_MODEL=<hermes-model>
-MNEMOSYNE_EMBEDDINGS_VIA_API=true
-MNEMOSYNE_EMBEDDING_API_URL=https://your-embedding-endpoint/v1
-MNEMOSYNE_EMBEDDING_API_KEY=...
-MNEMOSYNE_EMBEDDING_MODEL=text-embedding-3-small
-MNEMOSYNE_EMBEDDING_DIM=1536
-```
-
-For `full-online`, the interactive installer prompts for embedding API URL, hidden API key, model, and dimension in the same run. Non-interactive installs can set those via `MNEMOSYNE_EMBEDDING_API_URL`, `MNEMOSYNE_EMBEDDING_API_KEY`, `MNEMOSYNE_EMBEDDING_MODEL`, and `MNEMOSYNE_EMBEDDING_DIM` before calling `bash install.sh --yes --mnemosyne-mode full-online`.
-
-The installer does not accept API keys as CLI flags because that leaks into shell history/process lists. Dry-run previews redact `MNEMOSYNE_EMBEDDING_API_KEY`. When switching modes, it removes stale bootstrapper-managed keys such as `MNEMOSYNE_FORCE_LOCAL`, `MNEMOSYNE_LLM_REPO`, or `MNEMOSYNE_HOST_LLM_ENABLED`; it preserves API keys/endpoints and non-default embedding model/dimension values you added yourself while staying in `full-online`.
 
 ## After install
 
@@ -457,36 +274,32 @@ hermes -p work mnemosyne stats
 hermes -p work plugins list --plain --no-bundled
 ```
 
-LCM status is available after a normal conversation initializes the session:
+Session-level checks after a normal conversation starts:
 
 ```text
 /lcm status
-```
-
-Progress-tail checks:
-
-```text
 /progresstail doctor
 /progresstail demo
 ```
 
 ## Local development
 
-Use a local checkout without downloading from GitHub:
+Use a local checkout:
 
 ```bash
 HERMES_STACK_SOURCE_DIR="$PWD" bash install.sh --dry-run
 HERMES_STACK_SOURCE_DIR="$PWD" bash install.sh
 ```
 
-Run tests:
+Run checks:
 
 ```bash
 python -m unittest discover -s tests -v
 python -m compileall -q hermes_stack_bootstrap
 bash -n install.sh
+git diff --check
 ```
 
-## Project status
+## Status
 
-This is a small bootstrapper, not a general Hermes distribution. It is meant to make one specific stack easy to install and review.
+This is a small bootstrapper for one practical Hermes stack. It is not a general Hermes distribution.
