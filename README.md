@@ -32,7 +32,7 @@ bash install.sh --dry-run
 bash install.sh
 ```
 
-Interactive mode is TUI-only (`Rich` + `prompt_toolkit`). `install.sh` bootstraps `PyYAML`, `Rich`, and `prompt_toolkit` into the selected Hermes runtime Python before launching the wizard. `curl | bash` is supported; the installer reattaches prompts to `/dev/tty` when stdin is the curl pipe.
+Interactive mode is TUI-only (`Rich` + `prompt_toolkit`). `install.sh` bootstraps `PyYAML`, `Rich`, and `prompt_toolkit` into a temporary isolated installer venv, then launches the wizard with `HERMES_STACK_PYTHON` still pointing at the detected Hermes runtime Python. This keeps installer UI dependencies from upgrading or downgrading packages inside Hermes' own venv. `curl | bash` is supported; the installer reattaches prompts to `/dev/tty` when stdin is the curl pipe.
 
 ## What it changes
 

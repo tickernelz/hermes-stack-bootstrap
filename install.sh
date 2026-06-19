@@ -5,6 +5,18 @@ REPO="${HERMES_STACK_REPO:-tickernelz/hermes-stack-bootstrap}"
 REF="${HERMES_STACK_REF:-main}"
 SOURCE_DIR="${HERMES_STACK_SOURCE_DIR:-}"
 BOOTSTRAP_DEPS=("PyYAML>=6" "rich>=13" "prompt_toolkit>=3")
+TMP_DIR=""
+BOOTSTRAP_VENV_DIR=""
+
+cleanup() {
+  if [[ -n "${BOOTSTRAP_VENV_DIR:-}" ]]; then
+    rm -rf "$BOOTSTRAP_VENV_DIR"
+  fi
+  if [[ -n "${TMP_DIR:-}" ]]; then
+    rm -rf "$TMP_DIR"
+  fi
+}
+trap cleanup EXIT
 
 is_executable() {
   [[ -n "${1:-}" && -x "$1" && -f "$1" ]]
@@ -292,31 +304,72 @@ should_bootstrap_tui_deps() {
   return 0
 }
 
+bootstrap_python_for_venv() {
+  local venv_dir="$1"
+  if is_executable "$venv_dir/bin/python"; then
+    printf '%s\n' "$venv_dir/bin/python"
+    return 0
+  fi
+  if is_executable "$venv_dir/Scripts/python.exe"; then
+    printf '%s\n' "$venv_dir/Scripts/python.exe"
+    return 0
+  fi
+  if is_executable "$venv_dir/Scripts/python"; then
+    printf '%s\n' "$venv_dir/Scripts/python"
+    return 0
+  fi
+  return 1
+}
+
+create_bootstrap_venv() {
+  BOOTSTRAP_VENV_DIR="$(mktemp -d)"
+  echo "Creating isolated installer venv with ${PYTHON_BIN}" >&2
+  if ! "$PYTHON_BIN" -m venv "$BOOTSTRAP_VENV_DIR"; then
+    {
+      echo "Error: Failed to create isolated installer venv."
+      echo "Python: ${PYTHON_BIN}"
+      echo "Manual fallback: ${PYTHON_BIN} -m venv /tmp/hermes-stack-bootstrap-venv"
+      echo "Then install TUI deps in that venv and run this installer module from the source checkout."
+    } >&2
+    return 1
+  fi
+  local bootstrap_python
+  bootstrap_python="$(bootstrap_python_for_venv "$BOOTSTRAP_VENV_DIR")" || {
+    echo "Error: Isolated installer venv did not contain a Python executable: ${BOOTSTRAP_VENV_DIR}" >&2
+    return 1
+  }
+  printf '%s\n' "$bootstrap_python"
+}
+
 install_bootstrap_deps() {
-  echo "Installing TUI bootstrap dependencies with ${PYTHON_BIN}"
-  if "$PYTHON_BIN" -m pip install --upgrade --no-cache-dir "${BOOTSTRAP_DEPS[@]}"; then
+  local bootstrap_python="$1"
+  echo "Installing TUI bootstrap dependencies in isolated venv with ${bootstrap_python}"
+  if "$bootstrap_python" -m pip install --upgrade --no-cache-dir "${BOOTSTRAP_DEPS[@]}"; then
     return 0
   fi
   local manual_deps="${BOOTSTRAP_DEPS[*]}"
   {
-    echo "Error: Failed to install TUI bootstrap dependencies."
-    echo "Python: ${PYTHON_BIN}"
-    echo "Manual install: ${PYTHON_BIN} -m pip install ${manual_deps}"
+    echo "Error: Failed to install TUI bootstrap dependencies in isolated installer venv."
+    echo "Hermes runtime Python (unchanged): ${PYTHON_BIN}"
+    echo "Installer Python: ${bootstrap_python}"
+    echo "Manual install: ${bootstrap_python} -m pip install ${manual_deps}"
     echo "Then rerun this installer. Noninteractive installs can still use --yes."
   } >&2
   return 1
 }
 
 run_bootstrap() {
+  local run_python="$PYTHON_BIN"
   if should_bootstrap_tui_deps "$@"; then
-    install_bootstrap_deps
+    run_python="$(create_bootstrap_venv)"
+    install_bootstrap_deps "$run_python"
   fi
   if [[ -t 0 ]]; then
-    exec "$PYTHON_BIN" -m hermes_stack_bootstrap "$@"
+    "$run_python" -m hermes_stack_bootstrap "$@"
   elif tty_available; then
-    exec "$PYTHON_BIN" -m hermes_stack_bootstrap "$@" < /dev/tty
+    "$run_python" -m hermes_stack_bootstrap "$@" < /dev/tty
   else
-    exec "$PYTHON_BIN" -m hermes_stack_bootstrap "$@"
+    "$run_python" -m hermes_stack_bootstrap "$@"
   fi
 }
 
@@ -334,13 +387,10 @@ fi
 if [[ -n "$SOURCE_DIR" ]]; then
   cd "$SOURCE_DIR"
   run_bootstrap "$@"
+  exit $?
 fi
 
 TMP_DIR="$(mktemp -d)"
-cleanup() {
-  rm -rf "$TMP_DIR"
-}
-trap cleanup EXIT
 
 ARCHIVE_URL="https://github.com/${REPO}/archive/${REF}.tar.gz"
 echo "Downloading hermes-stack-bootstrap from ${ARCHIVE_URL}"
