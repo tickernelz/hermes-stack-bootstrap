@@ -14,19 +14,19 @@ It installs the stack into your own Hermes profile. It does **not** ask you to c
 ## Quick install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.1.1/install.sh | bash
 ```
 
 Dry run first:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/main/install.sh | bash -s -- --dry-run
+curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.1.1/install.sh | bash -s -- --dry-run
 ```
 
 Inspect before running:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/main/install.sh
+curl -fsSLO https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.1.1/install.sh
 less install.sh
 bash install.sh --dry-run
 bash install.sh
