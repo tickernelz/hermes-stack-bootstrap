@@ -65,11 +65,23 @@ Existing `config.yaml`, `.env`, and `SOUL.md` are backed up before non-dry-run w
 | `hermes-lcm` | clones/updates plugin repo | upstream layout preserved |
 | `mnemosyne-memory` | installs package set into Hermes runtime Python | default mode: `hybrid` |
 | `hermes-progress-tail` | runs upstream release installer | pin with `--progress-tail-ref` |
-| `SOUL.md` | optional `hermes chat -q` generation | asks only agent name + user name |
+| `SOUL.md` | optional `hermes chat -q` generation | asks only agent name + user name; generates a critical tool-using senior-operator identity |
 | `superpowers` | optional shallow clone | prompted in TUI; flag: `--install-superpowers` |
 | HMX knowledge | optional clone | prompted in TUI; private repo; user must already have access; flag: `--install-hmx-knowledge` |
 | `impeccable` | optional shallow clone | prompted in TUI; flag: `--install-impeccable` |
 | `ponytail` | optional shallow clone | prompted in TUI; recommended default: yes; flag: `--install-ponytail` |
+
+### Generated `SOUL.md` posture
+
+The generator creates a compact global identity for a critical, tool-using senior operator. The generated persona emphasizes:
+
+- helpful skepticism and pushback against weak assumptions
+- effective tool use instead of guessing retrievable facts
+- evidence-backed completion claims and real verification
+- context management, delegation, memory discipline, and safety boundaries
+- direct, pragmatic communication without sycophancy
+
+It still respects Hermes' `SOUL.md` boundary: project-specific commands, repo workflows, paths, ports, provider names, API keys, secrets, and temporary task state belong in `AGENTS.md`, skills, memory, `config.yaml`, or `.env`, not in `SOUL.md`.
 
 ## Runtime and profile detection
 
