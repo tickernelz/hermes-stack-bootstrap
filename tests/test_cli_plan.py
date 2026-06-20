@@ -85,7 +85,7 @@ class CliPlanTests(unittest.TestCase):
         self.assertEqual(options.mnemosyne_mode, "hybrid")
 
     def test_wizard_allows_manual_base_home_override(self):
-        tui = FakeTui(["/opt/hermes", "work", "full-local", "", "", False, False])
+        tui = FakeTui(["/opt/hermes", "work", "full-local", "", "", False, False, False, False, False])
         with (
             patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
             patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
@@ -437,7 +437,7 @@ class CliPlanTests(unittest.TestCase):
             hermes_python=None,
             hermes_python_source="not found",
         )
-        tui = FakeTui([None, "Skip Mnemosyne", None, "", "", False, False])
+        tui = FakeTui([None, "Skip Mnemosyne", None, "", "", False, False, False, False, False])
         with (
             patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/home/lutfi22/.hermes")),
             patch("hermes_stack_bootstrap.cli.discover_hermes_runtime", return_value=missing_runtime),
@@ -461,7 +461,7 @@ class CliPlanTests(unittest.TestCase):
             runtime_python.parent.mkdir(parents=True)
             runtime_python.write_text("#!/bin/sh\n", encoding="utf-8")
             runtime_python.chmod(0o755)
-            tui = FakeTui([None, "Paste runtime Python path", str(runtime_python), None, "hybrid", "", "", False, False])
+            tui = FakeTui([None, "Paste runtime Python path", str(runtime_python), None, "hybrid", "", "", False, False, False, False, False])
             with (
                 patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/home/lutfi22/.hermes")),
                 patch("hermes_stack_bootstrap.cli.discover_hermes_runtime", return_value=missing_runtime),
@@ -510,8 +510,11 @@ class CliPlanTests(unittest.TestCase):
             "anthropic/claude-sonnet-4",
             "google/gemini-3-flash",
             None,  # expansion same as summary
-            False,
-            False,
+            False,  # skip Superpowers
+            False,  # skip HMX knowledge
+            False,  # skip Impeccable
+            False,  # skip Ponytail
+            False,  # no SOUL
         ])
         with (
             patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
@@ -559,10 +562,13 @@ class CliPlanTests(unittest.TestCase):
             "secret-from-prompt",
             "text-embedding-3-small",
             "1536",
-            "",
-            "",
-            False,
-            False,
+            "",  # lcm summary
+            "",  # lcm expansion
+            False,  # skip Superpowers
+            False,  # skip HMX knowledge
+            False,  # skip Impeccable
+            False,  # skip Ponytail
+            False,  # no SOUL
         ])
         with (
             patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
@@ -692,14 +698,17 @@ class CliPlanTests(unittest.TestCase):
             commands,
         )
 
-    def test_interactive_wizard_recommends_ponytail_by_default(self):
+    def test_interactive_wizard_prompts_for_all_optional_skill_packs(self):
         tui = FakeTui([
             None,
             None,
             "hybrid",
             None,  # no lcm summary override
             None,  # no lcm expansion override
-            None,  # recommended Ponytail default accepted
+            False,  # skip Superpowers
+            False,  # skip HMX knowledge
+            False,  # skip Impeccable
+            False,  # skip recommended Ponytail
             False,  # no SOUL
         ])
         with (
@@ -708,7 +717,13 @@ class CliPlanTests(unittest.TestCase):
         ):
             options = wizard([], ui=tui)
 
-        self.assertTrue(options.install_ponytail)
+        self.assertFalse(options.install_superpowers)
+        self.assertFalse(options.install_hmx_knowledge)
+        self.assertFalse(options.install_impeccable)
+        self.assertFalse(options.install_ponytail)
+        self.assertIn(("confirm", "Install Obra Superpowers skill pack?", False), tui.events)
+        self.assertIn(("confirm", "Install HMX knowledge skill pack?", False), tui.events)
+        self.assertIn(("confirm", "Install Impeccable design skill?", False), tui.events)
         self.assertIn(("confirm", "Install strongly recommended Ponytail skill pack?", True), tui.events)
 
     def test_wizard_accepts_noninteractive_soul_generation_options(self):
@@ -743,7 +758,10 @@ class CliPlanTests(unittest.TestCase):
             "hybrid",
             None,
             None,
-            None,
+            False,  # skip Superpowers
+            False,  # skip HMX knowledge
+            False,  # skip Impeccable
+            None,  # recommended Ponytail default accepted
             True,
             "Gatot",
             "Zhafron",

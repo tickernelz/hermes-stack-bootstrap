@@ -1152,7 +1152,7 @@ def wizard(
         tui = require_tui(ui)
         tui.banner(
             "Hermes Stack Bootstrap",
-            "Installs hermes-lcm, Mnemosyne, and hermes-progress-tail. Optional skill packs are flag-gated.",
+            "Installs hermes-lcm, Mnemosyne, and hermes-progress-tail. Optional skill packs are prompted before install.",
         )
         home = Path(prompt_default("Hermes base path", str(home), tui)).expanduser()
         runtime = discover_hermes_runtime(
@@ -1219,6 +1219,12 @@ def wizard(
                 current_model=args.lcm_expansion_model,
                 default_model=args.lcm_summary_model,
             )
+        if not args.install_superpowers:
+            args.install_superpowers = prompt_yes_no("Install Obra Superpowers skill pack?", False, tui)
+        if not args.install_hmx_knowledge:
+            args.install_hmx_knowledge = prompt_yes_no("Install HMX knowledge skill pack?", False, tui)
+        if not args.install_impeccable:
+            args.install_impeccable = prompt_yes_no("Install Impeccable design skill?", False, tui)
         if not args.install_ponytail:
             args.install_ponytail = prompt_yes_no("Install strongly recommended Ponytail skill pack?", True, tui)
         if not args.generate_soul:

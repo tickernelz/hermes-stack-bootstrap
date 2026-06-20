@@ -58,10 +58,10 @@ Existing `config.yaml`, `.env`, and `SOUL.md` are backed up before non-dry-run w
 | `mnemosyne-memory` | installs package set into Hermes runtime Python | default mode: `hybrid` |
 | `hermes-progress-tail` | runs upstream release installer | pin with `--progress-tail-ref` |
 | `SOUL.md` | optional `hermes chat -q` generation | asks only agent name + user name |
-| `superpowers` | optional shallow clone | `--install-superpowers` |
-| `impeccable` | optional shallow clone | `--install-impeccable` |
-| `ponytail` | optional shallow clone | interactive default: yes; flag: `--install-ponytail` |
-| HMX knowledge | optional clone | private repo; user must already have access |
+| `superpowers` | optional shallow clone | prompted in TUI; flag: `--install-superpowers` |
+| HMX knowledge | optional clone | prompted in TUI; private repo; user must already have access; flag: `--install-hmx-knowledge` |
+| `impeccable` | optional shallow clone | prompted in TUI; flag: `--install-impeccable` |
+| `ponytail` | optional shallow clone | prompted in TUI; recommended default: yes; flag: `--install-ponytail` |
 
 ## Runtime and profile detection
 
@@ -122,6 +122,7 @@ bash install.sh --skip-progress-tail
 
 # optional skills
 bash install.sh --install-superpowers
+bash install.sh --install-hmx-knowledge
 bash install.sh --install-impeccable
 bash install.sh --install-ponytail
 
