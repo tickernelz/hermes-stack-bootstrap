@@ -4,6 +4,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from hermes_stack_bootstrap.soul_generator import (
+    DEFAULT_SOUL_COMMUNICATION_STYLE,
+    DEFAULT_SOUL_LANGUAGE,
     SoulAnswers,
     build_hermes_soul_command,
     build_soul_prompt,
@@ -15,6 +17,14 @@ from hermes_stack_bootstrap.soul_generator import (
 class SoulGeneratorTests(unittest.TestCase):
     def answers(self) -> SoulAnswers:
         return SoulAnswers(agent_name="Gatot", user_name="Zhafron")
+
+    def custom_answers(self) -> SoulAnswers:
+        return SoulAnswers(
+            agent_name="Gatot",
+            user_name="Zhafron",
+            communication_style="Blunt, fast, and engineering-focused",
+            language="Bahasa Indonesia by default; English for code and APIs",
+        )
 
     def valid_soul(self) -> str:
         return "\n\n".join(
@@ -39,6 +49,8 @@ class SoulGeneratorTests(unittest.TestCase):
 
         self.assertIn("Agent name: Gatot", prompt)
         self.assertIn("User name: Zhafron", prompt)
+        self.assertIn(f"Communication style: {DEFAULT_SOUL_COMMUNICATION_STYLE}", prompt)
+        self.assertIn(f"Language: {DEFAULT_SOUL_LANGUAGE}", prompt)
         self.assertIn("critical senior operator", prompt)
         self.assertIn("helpful skeptic", prompt)
         self.assertIn("Maximize effective tool use, not performative tool use", prompt)
@@ -49,6 +61,14 @@ class SoulGeneratorTests(unittest.TestCase):
         self.assertIn("API keys", prompt)
         self.assertIn("SOUL.md is Hermes' primary identity file", prompt)
         self.assertNotIn("Agent role:", prompt)
+
+    def test_build_soul_prompt_includes_custom_communication_style_and_language(self):
+        prompt = build_soul_prompt(self.custom_answers())
+
+        self.assertIn("Communication style: Blunt, fast, and engineering-focused", prompt)
+        self.assertIn("Language: Bahasa Indonesia by default; English for code and APIs", prompt)
+        self.assertNotIn(f"Communication style: {DEFAULT_SOUL_COMMUNICATION_STYLE}", prompt)
+        self.assertNotIn(f"Language: {DEFAULT_SOUL_LANGUAGE}", prompt)
 
     def test_build_soul_prompt_requests_powerful_but_compact_soul_sections(self):
         prompt = build_soul_prompt(self.answers())

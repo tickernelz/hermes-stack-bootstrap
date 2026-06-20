@@ -65,7 +65,7 @@ Existing `config.yaml`, `.env`, and `SOUL.md` are backed up before non-dry-run w
 | `hermes-lcm` | clones/updates plugin repo | upstream layout preserved |
 | `mnemosyne-memory` | installs package set into Hermes runtime Python | default mode: `hybrid` |
 | `hermes-progress-tail` | runs upstream release installer | pin with `--progress-tail-ref` |
-| `SOUL.md` | optional `hermes chat -q` generation | asks only agent name + user name; generates a critical tool-using senior-operator identity |
+| `SOUL.md` | optional `hermes chat -q` generation | asks agent name, user name, communication style, and language; defaults keep lazy users moving |
 | `superpowers` | optional shallow clone | prompted in TUI; flag: `--install-superpowers` |
 | HMX knowledge | optional clone | prompted in TUI; private repo; user must already have access; flag: `--install-hmx-knowledge` |
 | `impeccable` | optional shallow clone | prompted in TUI; flag: `--install-impeccable` |
@@ -73,7 +73,12 @@ Existing `config.yaml`, `.env`, and `SOUL.md` are backed up before non-dry-run w
 
 ### Generated `SOUL.md` posture
 
-The generator creates a compact global identity for a critical, tool-using senior operator. The generated persona emphasizes:
+The generator creates a compact global identity for a critical, tool-using senior operator. It prompts for agent name, user name, communication style, and language. If communication/language are left blank, it uses safe defaults:
+
+- communication style: direct, pragmatic, concise, technically honest, warm enough, no fluff or sycophancy
+- language: match the user's language; use English for code, APIs, commands, and technical identifiers
+
+The generated persona emphasizes:
 
 - helpful skepticism and pushback against weak assumptions
 - effective tool use instead of guessing retrievable facts
@@ -136,6 +141,11 @@ bash install.sh --dry-run
 bash install.sh --install-mode full
 bash install.sh --install-mode plugin-skill-only
 bash install.sh --install-mode soul-only --soul-agent-name Gatot --soul-user-name Zhafron
+bash install.sh --install-mode soul-only \
+  --soul-agent-name Gatot \
+  --soul-user-name Zhafron \
+  --soul-communication "Direct, concise, strict reviewer" \
+  --soul-language "Bahasa Indonesia by default; English for code and APIs"
 
 # non-interactive defaults
 bash install.sh --yes

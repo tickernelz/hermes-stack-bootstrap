@@ -30,7 +30,12 @@ from .env_template import (
 )
 from .hermes_discovery import HermesRuntime, discover_hermes_runtime
 from .hermes_models import ProviderChoice, model_choices_for_provider, provider_choices
-from .soul_generator import SoulAnswers, generate_soul_with_hermes
+from .soul_generator import (
+    DEFAULT_SOUL_COMMUNICATION_STYLE,
+    DEFAULT_SOUL_LANGUAGE,
+    SoulAnswers,
+    generate_soul_with_hermes,
+)
 
 
 LCM_REPO = "https://github.com/stephenschoettler/hermes-lcm"
@@ -179,10 +184,10 @@ class InstallerOptions:
     soul_user_name: str = ""
     soul_role: str = ""
     soul_behavior: str = ""
-    soul_communication: str = ""
+    soul_communication: str = DEFAULT_SOUL_COMMUNICATION_STYLE
     soul_focus: str = ""
     soul_avoid: str = ""
-    soul_language: str = ""
+    soul_language: str = DEFAULT_SOUL_LANGUAGE
     soul_provider: str = ""
     soul_model: str = ""
     soul_overwrite: bool = False
@@ -447,7 +452,12 @@ def mnemosyne_pip_packages(mode: str) -> str:
 
 
 def soul_answers_from_options(options: InstallerOptions) -> SoulAnswers:
-    return SoulAnswers(agent_name=options.soul_agent_name, user_name=options.soul_user_name)
+    return SoulAnswers(
+        agent_name=options.soul_agent_name,
+        user_name=options.soul_user_name,
+        communication_style=options.soul_communication,
+        language=options.soul_language,
+    )
 
 
 def soul_generation_command_preview(options: InstallerOptions) -> str:
@@ -1114,15 +1124,38 @@ def prompt_soul_answers(args: argparse.Namespace, ui: RichPromptTui | None = Non
     tui = require_tui(ui)
     args.soul_agent_name = prompt_default("Agent name", args.soul_agent_name or "Hermes", tui)
     args.soul_user_name = prompt_default("User name", args.soul_user_name, tui)
+    args.soul_communication = prompt_default(
+        "Communication style",
+        args.soul_communication or DEFAULT_SOUL_COMMUNICATION_STYLE,
+        tui,
+    )
+    args.soul_language = prompt_default(
+        "Language",
+        args.soul_language or DEFAULT_SOUL_LANGUAGE,
+        tui,
+    )
 
 
 def prompt_soul_options(options: InstallerOptions, ui: RichPromptTui | None = None) -> InstallerOptions:
     tui = require_tui(ui)
     agent_name = prompt_default("Agent name", options.soul_agent_name or "Hermes", tui)
     user_name = prompt_default("User name", options.soul_user_name, tui)
+    communication = prompt_default(
+        "Communication style",
+        options.soul_communication or DEFAULT_SOUL_COMMUNICATION_STYLE,
+        tui,
+    )
+    language = prompt_default("Language", options.soul_language or DEFAULT_SOUL_LANGUAGE, tui)
     if not agent_name.strip() or not user_name.strip():
         raise ValueError("SOUL.md generation requires agent name and user name")
-    return dataclasses.replace(options, generate_soul=True, soul_agent_name=agent_name, soul_user_name=user_name)
+    return dataclasses.replace(
+        options,
+        generate_soul=True,
+        soul_agent_name=agent_name,
+        soul_user_name=user_name,
+        soul_communication=communication or DEFAULT_SOUL_COMMUNICATION_STYLE,
+        soul_language=language or DEFAULT_SOUL_LANGUAGE,
+    )
 
 
 def wizard(
@@ -1224,10 +1257,10 @@ def wizard(
     parser.add_argument("--soul-user-name", default="")
     parser.add_argument("--soul-role", default="")
     parser.add_argument("--soul-behavior", default="")
-    parser.add_argument("--soul-communication", default="")
+    parser.add_argument("--soul-communication", default=DEFAULT_SOUL_COMMUNICATION_STYLE)
     parser.add_argument("--soul-focus", default="")
     parser.add_argument("--soul-avoid", default="")
-    parser.add_argument("--soul-language", default="")
+    parser.add_argument("--soul-language", default=DEFAULT_SOUL_LANGUAGE)
     parser.add_argument("--soul-provider", default="", help="Optional provider override for the Hermes SOUL generation call.")
     parser.add_argument("--soul-model", default="", help="Optional model override for the Hermes SOUL generation call.")
     parser.add_argument("--soul-overwrite", action="store_true", help="Allow replacing an existing SOUL.md after backup.")

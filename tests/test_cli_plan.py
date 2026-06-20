@@ -26,6 +26,7 @@ from hermes_stack_bootstrap.cli import (
 )
 from hermes_stack_bootstrap.hermes_discovery import HermesRuntime
 from hermes_stack_bootstrap.hermes_models import ProviderChoice
+from hermes_stack_bootstrap.soul_generator import DEFAULT_SOUL_COMMUNICATION_STYLE, DEFAULT_SOUL_LANGUAGE
 
 
 class FakeTui:
@@ -238,6 +239,8 @@ class CliPlanTests(unittest.TestCase):
                 True,  # generate SOUL after install
                 "Gatot",
                 "Zhafron",
+                None,  # communication style default
+                None,  # language default
             ])
             calls = []
 
@@ -262,6 +265,8 @@ class CliPlanTests(unittest.TestCase):
         self.assertTrue(generated_plan.options.generate_soul)
         self.assertEqual(generated_plan.options.soul_agent_name, "Gatot")
         self.assertEqual(generated_plan.options.soul_user_name, "Zhafron")
+        self.assertEqual(generated_plan.options.soul_communication, DEFAULT_SOUL_COMMUNICATION_STYLE)
+        self.assertEqual(generated_plan.options.soul_language, DEFAULT_SOUL_LANGUAGE)
         confirm_prompts = [event[1] for event in tui.events if event[0] == "confirm"]
         self.assertIn("Generate SOUL.md with Hermes AI backend now?", confirm_prompts)
 
@@ -952,6 +957,10 @@ class CliPlanTests(unittest.TestCase):
                     "Gatot",
                     "--soul-user-name",
                     "Zhafron",
+                    "--soul-communication",
+                    "Blunt and concise",
+                    "--soul-language",
+                    "Bahasa Indonesia",
                     "--soul-provider",
                     "openrouter",
                     "--soul-model",
@@ -963,6 +972,8 @@ class CliPlanTests(unittest.TestCase):
         self.assertTrue(options.generate_soul)
         self.assertEqual(options.soul_agent_name, "Gatot")
         self.assertEqual(options.soul_user_name, "Zhafron")
+        self.assertEqual(options.soul_communication, "Blunt and concise")
+        self.assertEqual(options.soul_language, "Bahasa Indonesia")
         self.assertEqual(options.soul_provider, "openrouter")
         self.assertEqual(options.soul_model, "anthropic/claude-sonnet-4")
         self.assertTrue(options.soul_overwrite)
@@ -987,6 +998,8 @@ class CliPlanTests(unittest.TestCase):
                 True,  # apply plan
                 "Gatot",
                 "Zhafron",
+                None,  # communication style default
+                None,  # language default
             ])
 
             with patch("hermes_stack_bootstrap.cli.apply_soul_generation") as soul_mock:
@@ -995,9 +1008,13 @@ class CliPlanTests(unittest.TestCase):
         generated_plan = soul_mock.call_args.args[0]
         self.assertEqual(generated_plan.options.soul_agent_name, "Gatot")
         self.assertEqual(generated_plan.options.soul_user_name, "Zhafron")
+        self.assertEqual(generated_plan.options.soul_communication, DEFAULT_SOUL_COMMUNICATION_STYLE)
+        self.assertEqual(generated_plan.options.soul_language, DEFAULT_SOUL_LANGUAGE)
         text_prompts = [event[1] for event in tui.events if event[0] == "text"]
         self.assertIn("Agent name", text_prompts)
         self.assertIn("User name", text_prompts)
+        self.assertIn("Communication style", text_prompts)
+        self.assertIn("Language", text_prompts)
         self.assertNotIn("Agent role", text_prompts)
         self.assertNotIn("Behavior / personality", text_prompts)
 
@@ -1005,6 +1022,22 @@ class CliPlanTests(unittest.TestCase):
         with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
             with self.assertRaisesRegex(ValueError, "--soul-agent-name"):
                 wizard(["--yes", "--generate-soul"])
+
+    def test_wizard_uses_soul_style_and_language_defaults_when_omitted(self):
+        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
+            options = wizard(
+                [
+                    "--yes",
+                    "--generate-soul",
+                    "--soul-agent-name",
+                    "Gatot",
+                    "--soul-user-name",
+                    "Zhafron",
+                ]
+            )
+
+        self.assertEqual(options.soul_communication, DEFAULT_SOUL_COMMUNICATION_STYLE)
+        self.assertEqual(options.soul_language, DEFAULT_SOUL_LANGUAGE)
 
     def test_build_plan_includes_soul_generation_step(self):
         options = InstallerOptions(

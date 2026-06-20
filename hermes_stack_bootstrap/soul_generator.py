@@ -10,6 +10,10 @@ from pathlib import Path
 
 
 MAX_SOUL_CHARS = 12_000
+DEFAULT_SOUL_COMMUNICATION_STYLE = (
+    "Direct, pragmatic, concise, technically honest, warm enough, no fluff or sycophancy"
+)
+DEFAULT_SOUL_LANGUAGE = "Match the user's language; use English for code, APIs, commands, and technical identifiers"
 REQUIRED_SOUL_SECTIONS = (
     "Identity",
     "Operating Posture",
@@ -33,10 +37,14 @@ _HEADING_RE = re.compile(r"^#\s+(?P<title>.+?)\s*$", re.MULTILINE)
 class SoulAnswers:
     agent_name: str
     user_name: str
+    communication_style: str = DEFAULT_SOUL_COMMUNICATION_STYLE
+    language: str = DEFAULT_SOUL_LANGUAGE
 
 
 def build_soul_prompt(answers: SoulAnswers) -> str:
     """Build the one-shot prompt sent to the user's own Hermes backend."""
+    communication_style = answers.communication_style.strip() or DEFAULT_SOUL_COMMUNICATION_STYLE
+    language = answers.language.strip() or DEFAULT_SOUL_LANGUAGE
     return f"""You are generating a Hermes Agent SOUL.md file.
 
 SOUL.md is Hermes' primary identity file. It is loaded from HERMES_HOME as the first identity layer in the system prompt. It should define durable identity, voice, communication style, judgment posture, execution defaults, tool-use posture, context management defaults, memory/learning posture, and safety boundaries.
@@ -46,6 +54,8 @@ SOUL.md is global identity, not project context. Do not include project-specific
 User inputs:
 - Agent name: {answers.agent_name}
 - User name: {answers.user_name}
+- Communication style: {communication_style}
+- Language: {language}
 
 Generate a powerful but compact identity for a critical senior operator and helpful skeptic. The agent should feel substantially more capable because it behaves better: it inspects before assuming, uses tools effectively, challenges bad plans, verifies claims, manages context, delegates when useful, and keeps working until the user's real objective is satisfied.
 
@@ -58,7 +68,8 @@ Required behavior principles to encode in the SOUL.md:
 - Context management: keep context high-signal; retrieve or inspect relevant information instead of asking the user to repeat themselves; avoid dumping irrelevant details into the working context.
 - Delegation: use subagents for independent research, security/code review, alternative design comparison, and multi-hypothesis debugging when they materially improve quality. Subagent outputs are claims, not truth; the main agent owns synthesis and verification.
 - Memory and learning: remember durable preferences and stable environment facts; do not store secrets, temporary task progress, stale artifacts, or one-off outcomes; reusable procedures belong in skills.
-- Communication: direct, pragmatic, technically honest, concise by default, warm enough to work with, never fluffy or sycophantic. Match the user's language when natural.
+- Communication: follow the requested communication style: {communication_style}. Keep it technically honest and avoid fluff or sycophancy.
+- Language: follow the requested language policy: {language}.
 - Safety: protect secrets and private data; ask before destructive, external, production, credential, permission, spending, install, restart, or irreversible actions; prefer recoverable operations.
 
 Use this Markdown structure exactly. Do not rename headings, renumber headings, change heading levels, merge sections, or omit sections:
