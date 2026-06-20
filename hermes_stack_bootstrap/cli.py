@@ -45,6 +45,13 @@ HMX_KNOWLEDGE_REPO = os.environ.get(
 IMPECCABLE_REPO = "https://github.com/pbakaus/impeccable"
 PONYTAIL_REPO = "https://github.com/DietrichGebert/ponytail"
 SENSITIVE_ENV_KEYS = {"MNEMOSYNE_EMBEDDING_API_KEY"}
+INSTALL_MODE_LABELS = {
+    "full": "Full process",
+    "plugin-skill-only": "Plugin & skill only",
+    "soul-only": "Generate SOUL.md only",
+}
+INSTALL_MODE_VALUES = {label: mode for mode, label in INSTALL_MODE_LABELS.items()}
+INSTALL_MODE_CHOICES = tuple(INSTALL_MODE_LABELS)
 
 
 class TuiDependencyError(RuntimeError):
@@ -145,6 +152,7 @@ class InstallerOptions:
     hermes_python_source: str = "profile-local default"
     yes: bool = False
     dry_run: bool = False
+    install_mode: str = "full"
     summary_model: str = ""
     lcm_summary_model: str = DEFAULT_LCM_SUMMARY_MODEL
     lcm_expansion_model: str = ""
@@ -158,6 +166,8 @@ class InstallerOptions:
     skip_lcm: bool = False
     skip_mnemosyne: bool = False
     skip_progress_tail: bool = False
+    skip_config_env: bool = False
+    skip_verify: bool = False
     progress_tail_ref: str = PROGRESS_TAIL_REF
     install_superpowers: bool = False
     install_hmx_knowledge: bool = False
@@ -288,6 +298,45 @@ def runtime_missing_message(options: InstallerOptions) -> str:
     )
 
 
+def normalize_install_mode(mode: str) -> str:
+    normalized = (mode or "full").strip().lower().replace("_", "-")
+    aliases = {
+        "full-process": "full",
+        "plugins-skill-only": "plugin-skill-only",
+        "plugins-skills-only": "plugin-skill-only",
+        "plugin-skills-only": "plugin-skill-only",
+        "plugins-only": "plugin-skill-only",
+        "skills-only": "plugin-skill-only",
+        "soul": "soul-only",
+        "generate-soul": "soul-only",
+    }
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in INSTALL_MODE_CHOICES:
+        raise ValueError(f"Unknown install mode: {mode}")
+    return normalized
+
+
+def apply_install_mode_defaults(args: argparse.Namespace) -> None:
+    args.install_mode = normalize_install_mode(args.install_mode)
+    if args.install_mode == "full":
+        return
+    if args.install_mode == "plugin-skill-only":
+        args.skip_mnemosyne = True
+        args.skip_config_env = True
+        return
+    if args.install_mode == "soul-only":
+        args.skip_lcm = True
+        args.skip_mnemosyne = True
+        args.skip_progress_tail = True
+        args.skip_config_env = True
+        args.skip_verify = True
+        args.generate_soul = True
+
+
+def install_mode_label(mode: str) -> str:
+    return INSTALL_MODE_LABELS[normalize_install_mode(mode)]
+
+
 def validate_runtime_options(options: InstallerOptions) -> None:
     if options.skip_mnemosyne:
         return
@@ -414,6 +463,19 @@ def soul_generation_command_preview(options: InstallerOptions) -> str:
     return " ".join(parts)
 
 
+def verification_command_for_options(options: InstallerOptions) -> str:
+    hermes_bin_cmd = shell_quote(hermes_bin_for_options(options))
+    profile_args = "" if options.profile == "default" else f" -p {options.profile}"
+    plugins = f"{hermes_bin_cmd}{profile_args} plugins list --plain --no-bundled"
+    if options.skip_mnemosyne:
+        return plugins
+    return (
+        f"{hermes_bin_cmd}{profile_args} memory status && "
+        f"{hermes_bin_cmd}{profile_args} mnemosyne stats && "
+        f"{plugins}"
+    )
+
+
 def build_plan(options: InstallerOptions) -> InstallPlan:
     base_home = options.base_home.expanduser()
     target_home = target_home_for(base_home, options.profile)
@@ -502,24 +564,28 @@ def build_plan(options: InstallerOptions) -> InstallPlan:
             )
         )
 
-    verify_command = f"{hermes_bin_cmd} memory status && {hermes_bin_cmd} mnemosyne stats && {hermes_bin_cmd} plugins list --plain --no-bundled"
-    if options.profile != "default":
-        verify_command = (
-            f"{hermes_bin_cmd} -p {options.profile} memory status && "
-            f"{hermes_bin_cmd} -p {options.profile} mnemosyne stats && "
-            f"{hermes_bin_cmd} -p {options.profile} plugins list --plain --no-bundled"
+    final_steps = []
+    if not options.skip_config_env:
+        final_steps.extend(
+            [
+                PlanStep(
+                    "Merge config.yaml safely",
+                    notes="Enable hermes-lcm + mnemosyne, set context.engine=lcm, disable built-in file memory.",
+                ),
+                PlanStep(
+                    "Merge .env values",
+                    notes="Write LCM tuning, selected Mnemosyne mode defaults, and any embedding API values explicitly supplied during install.",
+                ),
+            ]
         )
-
-    final_steps = [
-        PlanStep(
-            "Merge config.yaml safely",
-            notes="Enable hermes-lcm + mnemosyne, set context.engine=lcm, disable built-in file memory.",
-        ),
-        PlanStep(
-            "Merge .env values",
-            notes="Write LCM tuning, selected Mnemosyne mode defaults, and any embedding API values explicitly supplied during install.",
-        ),
-    ]
+    if not options.skip_verify:
+        final_steps.append(
+            PlanStep(
+                "Verify",
+                verification_command_for_options(options),
+                "Restart Hermes manually after applying changes, then run these checks.",
+            )
+        )
     if options.generate_soul:
         final_steps.append(
             PlanStep(
@@ -528,13 +594,6 @@ def build_plan(options: InstallerOptions) -> InstallPlan:
                 f"Writes {target_home / 'SOUL.md'}; existing files require overwrite approval and are backed up first.",
             )
         )
-    final_steps.append(
-        PlanStep(
-            "Verify",
-            verify_command,
-            "Restart Hermes manually after applying changes, then run these checks.",
-        )
-    )
     steps.extend(final_steps)
 
     return InstallPlan(
@@ -567,6 +626,7 @@ def print_plan(plan: InstallPlan) -> None:
     print(f"Config path    : {plan.config_path}")
     print(f"Env path       : {plan.env_path}")
     print(f"Dry run        : {plan.options.dry_run}")
+    print(f"Install mode   : {install_mode_label(plan.options.install_mode)}")
     print(f"Mnemosyne mode : {plan.options.mnemosyne_mode}")
     if plan.options.lcm_summary_model:
         print(f"LCM summary    : {plan.options.lcm_summary_model}")
@@ -753,6 +813,9 @@ def install_optional_skills(plan: InstallPlan) -> None:
 
 
 def merge_config_and_env(plan: InstallPlan) -> None:
+    if plan.options.skip_config_env:
+        print("Config/.env merge skipped for selected install mode.")
+        return
     env_values = build_env_values(
         home=str(plan.target_home),
         summary_model=plan.options.summary_model,
@@ -847,21 +910,28 @@ def apply_soul_generation(plan: InstallPlan) -> None:
 
 
 def run_verification(plan: InstallPlan) -> None:
+    if plan.options.skip_verify:
+        print("Verification skipped for selected install mode.")
+        return
     if plan.options.dry_run:
         print("DRY-RUN verification skipped")
         return
     hermes_bin = hermes_bin_for_options(plan.options)
-    commands: list[list[str]] = [
-        [hermes_bin, "memory", "status"],
-        [hermes_bin, "mnemosyne", "stats"],
-        [hermes_bin, "plugins", "list", "--plain", "--no-bundled"],
-    ]
-    if plan.options.profile != "default":
+    commands: list[list[str]] = [[hermes_bin, "plugins", "list", "--plain", "--no-bundled"]]
+    if not plan.options.skip_mnemosyne:
         commands = [
-            [hermes_bin, "-p", plan.options.profile, "memory", "status"],
-            [hermes_bin, "-p", plan.options.profile, "mnemosyne", "stats"],
-            [hermes_bin, "-p", plan.options.profile, "plugins", "list", "--plain", "--no-bundled"],
+            [hermes_bin, "memory", "status"],
+            [hermes_bin, "mnemosyne", "stats"],
+            [hermes_bin, "plugins", "list", "--plain", "--no-bundled"],
         ]
+    if plan.options.profile != "default":
+        commands = [[hermes_bin, "-p", plan.options.profile, "plugins", "list", "--plain", "--no-bundled"]]
+        if not plan.options.skip_mnemosyne:
+            commands = [
+                [hermes_bin, "-p", plan.options.profile, "memory", "status"],
+                [hermes_bin, "-p", plan.options.profile, "mnemosyne", "stats"],
+                [hermes_bin, "-p", plan.options.profile, "plugins", "list", "--plain", "--no-bundled"],
+            ]
     for command in commands:
         run_command(command, dry_run=False)
 
@@ -874,14 +944,26 @@ def apply_plan(plan: InstallPlan, ui: RichPromptTui | None = None) -> None:
         if not prompt_yes_no("Apply this plan?", False, ui):
             print("Aborted.")
             return
-    plan = resolve_soul_overwrite_before_apply(plan, ui)
     install_lcm(plan)
     install_mnemosyne(plan)
     install_progress_tail(plan)
     install_optional_skills(plan)
     merge_config_and_env(plan)
-    apply_soul_generation(plan)
     run_verification(plan)
+    if plan.options.generate_soul:
+        soul_options = plan.options
+        if not soul_options.soul_agent_name.strip() or not soul_options.soul_user_name.strip():
+            soul_options = prompt_soul_options(soul_options, ui)
+        soul_plan = dataclasses.replace(plan, options=soul_options)
+        soul_plan = resolve_soul_overwrite_before_apply(soul_plan, ui)
+        apply_soul_generation(soul_plan)
+    elif not plan.options.yes:
+        ui = require_tui(ui)
+        if prompt_yes_no("Generate SOUL.md with Hermes AI backend now?", False, ui):
+            soul_options = prompt_soul_options(plan.options, ui)
+            soul_plan = dataclasses.replace(plan, options=soul_options)
+            soul_plan = resolve_soul_overwrite_before_apply(soul_plan, ui)
+            apply_soul_generation(soul_plan)
     print("\nDone. Restart Hermes manually after applying changes: /restart")
 
 
@@ -943,7 +1025,7 @@ def apply_full_online_embedding_env_defaults(args: argparse.Namespace, env: os._
 
 
 def validate_soul_options(args: argparse.Namespace) -> None:
-    if not args.generate_soul:
+    if not args.generate_soul or not args.yes:
         return
     required = {
         "soul_agent_name": "--soul-agent-name",
@@ -1034,6 +1116,15 @@ def prompt_soul_answers(args: argparse.Namespace, ui: RichPromptTui | None = Non
     args.soul_user_name = prompt_default("User name", args.soul_user_name, tui)
 
 
+def prompt_soul_options(options: InstallerOptions, ui: RichPromptTui | None = None) -> InstallerOptions:
+    tui = require_tui(ui)
+    agent_name = prompt_default("Agent name", options.soul_agent_name or "Hermes", tui)
+    user_name = prompt_default("User name", options.soul_user_name, tui)
+    if not agent_name.strip() or not user_name.strip():
+        raise ValueError("SOUL.md generation requires agent name and user name")
+    return dataclasses.replace(options, generate_soul=True, soul_agent_name=agent_name, soul_user_name=user_name)
+
+
 def wizard(
     argv: Iterable[str] | None = None,
     *,
@@ -1108,9 +1199,17 @@ def wizard(
     parser.set_defaults(mnemosyne_embedding_api_key="")
     parser.add_argument("--yes", "-y", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--install-mode",
+        default=_env_get(runtime_env, "HERMES_STACK_INSTALL_MODE", "full"),
+        metavar="{full,plugin-skill-only,soul-only}",
+        help="Installer scope: full, plugin-skill-only, or soul-only. Aliases: plugins-only, skills-only, soul.",
+    )
     parser.add_argument("--skip-lcm", action="store_true")
     parser.add_argument("--skip-mnemosyne", action="store_true")
     parser.add_argument("--skip-progress-tail", action="store_true")
+    parser.add_argument("--skip-config-env", action="store_true")
+    parser.add_argument("--skip-verify", action="store_true")
     parser.add_argument(
         "--progress-tail-ref",
         default=_env_get(runtime_env, "HERMES_STACK_PROGRESS_TAIL_REF", PROGRESS_TAIL_REF),
@@ -1138,6 +1237,9 @@ def wizard(
         help="Private HMX knowledge repo URL. Prefer SSH or a git credential helper; do not put tokens in shell history.",
     )
     args = parser.parse_args(list(argv) if argv is not None else None)
+    args.install_mode = normalize_install_mode(args.install_mode)
+    if args.yes:
+        apply_install_mode_defaults(args)
     apply_full_online_embedding_env_defaults(args, runtime_env)
 
     home = Path(args.home).expanduser() if args.home else detect_base_home(args.hermes_bin or None)
@@ -1154,6 +1256,10 @@ def wizard(
             "Hermes Stack Bootstrap",
             "Installs hermes-lcm, Mnemosyne, and hermes-progress-tail. Optional skill packs are prompted before install.",
         )
+        args.install_mode = INSTALL_MODE_VALUES[
+            tui.select("Install mode", tuple(INSTALL_MODE_VALUES), install_mode_label(args.install_mode))
+        ]
+        apply_install_mode_defaults(args)
         home = Path(prompt_default("Hermes base path", str(home), tui)).expanduser()
         runtime = discover_hermes_runtime(
             base_home=home,
@@ -1162,7 +1268,11 @@ def wizard(
             env=runtime_env,
         )
         tui.runtime_summary(runtime)
-        detected_providers = provider_choices(runtime.hermes_python, home)
+        needs_provider_choices = (
+            (not args.skip_mnemosyne and args.mnemosyne_mode in {"hybrid", "full-online"})
+            or (not args.skip_config_env and not args.summary_model)
+        )
+        detected_providers = provider_choices(runtime.hermes_python, home) if needs_provider_choices else []
         if runtime.hermes_python is None and not args.skip_mnemosyne:
             runtime, skip_mnemosyne = prompt_missing_runtime_python(runtime, tui)
             args.skip_mnemosyne = skip_mnemosyne
@@ -1205,7 +1315,7 @@ def wizard(
                 args.mnemosyne_embedding_dim = prompt_default(
                     "Mnemosyne embedding dimension", args.mnemosyne_embedding_dim, tui
                 )
-        if not args.summary_model:
+        if not args.skip_config_env and not args.summary_model:
             args.lcm_summary_model = select_model_from_detected_providers(
                 tui=tui,
                 providers=detected_providers,
@@ -1219,18 +1329,14 @@ def wizard(
                 current_model=args.lcm_expansion_model,
                 default_model=args.lcm_summary_model,
             )
-        if not args.install_superpowers:
+        if args.install_mode != "soul-only" and not args.install_superpowers:
             args.install_superpowers = prompt_yes_no("Install Obra Superpowers skill pack?", False, tui)
-        if not args.install_hmx_knowledge:
+        if args.install_mode != "soul-only" and not args.install_hmx_knowledge:
             args.install_hmx_knowledge = prompt_yes_no("Install HMX knowledge skill pack?", False, tui)
-        if not args.install_impeccable:
+        if args.install_mode != "soul-only" and not args.install_impeccable:
             args.install_impeccable = prompt_yes_no("Install Impeccable design skill?", False, tui)
-        if not args.install_ponytail:
+        if args.install_mode != "soul-only" and not args.install_ponytail:
             args.install_ponytail = prompt_yes_no("Install strongly recommended Ponytail skill pack?", True, tui)
-        if not args.generate_soul:
-            args.generate_soul = prompt_yes_no("Generate SOUL.md with Hermes AI backend?", False, tui)
-        if args.generate_soul:
-            prompt_soul_answers(args, tui)
     if args.summary_model:
         args.lcm_summary_model = args.summary_model
         if not args.lcm_expansion_model:
@@ -1254,6 +1360,7 @@ def wizard(
         hermes_python_source=runtime.hermes_python_source,
         yes=args.yes,
         dry_run=args.dry_run,
+        install_mode=args.install_mode,
         summary_model=args.summary_model,
         lcm_summary_model=args.lcm_summary_model,
         lcm_expansion_model=args.lcm_expansion_model,
@@ -1267,6 +1374,8 @@ def wizard(
         skip_lcm=args.skip_lcm,
         skip_mnemosyne=args.skip_mnemosyne,
         skip_progress_tail=args.skip_progress_tail,
+        skip_config_env=args.skip_config_env,
+        skip_verify=args.skip_verify,
         progress_tail_ref=args.progress_tail_ref,
         install_superpowers=args.install_superpowers,
         install_hmx_knowledge=args.install_hmx_knowledge,

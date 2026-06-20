@@ -32,6 +32,14 @@ bash install.sh --dry-run
 bash install.sh
 ```
 
+Interactive mode starts with an install scope choice:
+
+| Mode | What it does |
+|---|---|
+| `Full process` | Installs/updates plugins, Mnemosyne, optional skills, config/env merges, verification, then offers SOUL.md generation. |
+| `Plugin & skill only` | Installs/updates plugin repos and selected skill packs, skips Mnemosyne package install and config/env merge, then offers SOUL.md generation. |
+| `Generate SOUL.md only` | Skips install/config work and only generates `SOUL.md` after plan approval. |
+
 Interactive mode is TUI-only (`Rich` + `prompt_toolkit`). `install.sh` bootstraps `PyYAML`, `Rich`, and `prompt_toolkit` into a temporary isolated installer venv, then launches the wizard with `HERMES_STACK_PYTHON` still pointing at the detected Hermes runtime Python. This keeps installer UI dependencies from upgrading or downgrading packages inside Hermes' own venv. `curl | bash` is supported; the installer reattaches prompts to `/dev/tty` when stdin is the curl pipe.
 
 ## What it changes
@@ -112,6 +120,11 @@ bash install.sh
 # no writes
 bash install.sh --dry-run
 
+# choose installer scope non-interactively
+bash install.sh --install-mode full
+bash install.sh --install-mode plugin-skill-only
+bash install.sh --install-mode soul-only --soul-agent-name Gatot --soul-user-name Zhafron
+
 # non-interactive defaults
 bash install.sh --yes
 
@@ -176,16 +189,22 @@ The dry-run preview redacts `MNEMOSYNE_EMBEDDING_API_KEY`. When switching modes,
 
 ## SOUL.md generation
 
-Generate once through your configured Hermes backend:
+Generate once through your configured Hermes backend. In interactive runs, SOUL.md generation is offered **after** the selected install process finishes, so the main install prompts stay focused on scope, plugins, and skills.
 
 ```bash
 bash install.sh --generate-soul
 ```
 
+SOUL-only interactive mode skips install/config work and prompts for agent/user identity after plan approval:
+
+```bash
+bash install.sh --install-mode soul-only
+```
+
 Non-interactive:
 
 ```bash
-bash install.sh --yes --generate-soul \
+bash install.sh --yes --install-mode soul-only \
   --soul-agent-name Gatot \
   --soul-user-name Zhafron
 ```
@@ -198,7 +217,7 @@ bash install.sh --generate-soul \
   --soul-model anthropic/claude-sonnet-4
 ```
 
-If `SOUL.md` exists, interactive mode asks before overwrite. Non-interactive mode requires `--soul-overwrite`. A failed model call does not write a partial file.
+If `SOUL.md` exists, interactive mode asks before overwrite immediately before generation. Non-interactive mode requires `--soul-overwrite`. A failed model call does not write a partial file.
 
 ## Config shape
 
