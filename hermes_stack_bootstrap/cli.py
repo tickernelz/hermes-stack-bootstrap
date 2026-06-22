@@ -869,15 +869,37 @@ def staged_skill_dir_name(skill_dir: Path, spec: SkillPackSpec) -> str:
     return name
 
 
+def rewrite_superpowers_skill_references(content: str, spec: SkillPackSpec) -> str:
+    if not spec.skill_name_prefix:
+        return content
+    namespace = spec.skill_name_prefix.rstrip("-")
+    for token in spec.body_token_prefixes:
+        replacement = f"{spec.skill_name_prefix}{token}"
+        if namespace:
+            content = re.sub(rf"\b{re.escape(namespace)}:{re.escape(token)}\b", replacement, content)
+        pattern = rf"(?<!{re.escape(spec.skill_name_prefix)})\b{re.escape(token)}\b"
+        content = re.sub(pattern, replacement, content)
+    return content
+
+
 def rewrite_staged_skill_manifest(path: Path, target_name: str, spec: SkillPackSpec) -> None:
     content = path.read_text(encoding="utf-8")
     if spec.skill_name_prefix:
         content = re.sub(r"(?m)^name:\s*.*$", f"name: {target_name}", content, count=1)
-        for token in spec.body_token_prefixes:
-            replacement = f"{spec.skill_name_prefix}{token}"
-            pattern = rf"(?<!{re.escape(spec.skill_name_prefix)})\b{re.escape(token)}\b"
-            content = re.sub(pattern, replacement, content)
+        content = rewrite_superpowers_skill_references(content, spec)
     path.write_text(content, encoding="utf-8")
+
+
+def rewrite_staged_skill_support_files(skill_dir: Path, spec: SkillPackSpec) -> None:
+    if not spec.skill_name_prefix:
+        return
+    for path in skill_dir.rglob("*.md"):
+        if path.name == "SKILL.md":
+            continue
+        content = path.read_text(encoding="utf-8")
+        rewritten = rewrite_superpowers_skill_references(content, spec)
+        if rewritten != content:
+            path.write_text(rewritten, encoding="utf-8")
 
 
 def stage_skill_pack(source_root: Path, dest: Path, spec: SkillPackSpec) -> None:
@@ -902,6 +924,7 @@ def stage_skill_pack(source_root: Path, dest: Path, spec: SkillPackSpec) -> None
         target = dest / target_name
         shutil.copytree(skill_dir, target, dirs_exist_ok=True)
         rewrite_staged_skill_manifest(target / "SKILL.md", target_name, spec)
+        rewrite_staged_skill_support_files(target, spec)
 
 
 def install_skill_pack(spec: SkillPackSpec, dest: Path, *, dry_run: bool) -> None:

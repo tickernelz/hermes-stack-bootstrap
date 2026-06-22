@@ -996,10 +996,20 @@ class CliPlanTests(unittest.TestCase):
             skill_dir = source / "skills" / "brainstorming"
             skill_dir.mkdir(parents=True)
             (skill_dir / "SKILL.md").write_text(
-                "---\nname: brainstorming\ndescription: Think first\n---\n\nUse test-driven-development when coding.\n",
+                "---\n"
+                "name: brainstorming\n"
+                "description: Think first\n"
+                "---\n\n"
+                "Use test-driven-development when coding.\n"
+                "Use superpowers:test-driven-development if namespace form is needed.\n"
+                "See ../test-driven-development/testing-anti-patterns.md.\n",
                 encoding="utf-8",
             )
-            (skill_dir / "visual-companion.md").write_text("helper", encoding="utf-8")
+            (skill_dir / "scripts").mkdir()
+            (skill_dir / "references").mkdir()
+            (skill_dir / "visual-companion.md").write_text("Use test-driven-development here too", encoding="utf-8")
+            (skill_dir / "scripts" / "start-server.sh").write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
+            (skill_dir / "references" / "guide.md").write_text("Ask for test-driven-development", encoding="utf-8")
             dest = Path(tmp) / "hermes" / "skills" / "vendor" / "obra-superpowers"
             spec = SkillPackSpec(
                 "obra-superpowers",
@@ -1014,20 +1024,35 @@ class CliPlanTests(unittest.TestCase):
             staged = dest / "superpowers-brainstorming"
             self.assertTrue((staged / "SKILL.md").exists())
             self.assertTrue((staged / "visual-companion.md").exists())
+            self.assertTrue((staged / "scripts" / "start-server.sh").exists())
+            self.assertTrue((staged / "references" / "guide.md").exists())
             content = (staged / "SKILL.md").read_text(encoding="utf-8")
             self.assertIn("name: superpowers-brainstorming", content)
             self.assertIn("superpowers-test-driven-development", content)
+            self.assertIn("superpowers-test-driven-development if namespace form is needed", content)
+            self.assertNotIn("superpowers:superpowers-", content)
+            self.assertIn("../superpowers-test-driven-development/testing-anti-patterns.md", content)
+            companion = (staged / "visual-companion.md").read_text(encoding="utf-8")
+            reference = (staged / "references" / "guide.md").read_text(encoding="utf-8")
+            script = (staged / "scripts" / "start-server.sh").read_text(encoding="utf-8")
+            self.assertIn("superpowers-test-driven-development", companion)
+            self.assertIn("superpowers-test-driven-development", reference)
+            self.assertNotIn("superpowers-", script)
             self.assertFalse((dest / "package.json").exists())
 
     def test_stage_skill_pack_uses_configured_impeccable_skill_source(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             (source / "plugin" / "skills" / "impeccable" / "scripts").mkdir(parents=True)
+            (source / "plugin" / "skills" / "impeccable" / "reference").mkdir(parents=True)
+            (source / "plugin" / "skills" / "impeccable" / "templates").mkdir(parents=True)
             (source / "plugin" / "skills" / "impeccable" / "SKILL.md").write_text(
                 "---\nname: impeccable\ndescription: Design skill\n---\n\nRun scripts/context.mjs.\n",
                 encoding="utf-8",
             )
             (source / "plugin" / "skills" / "impeccable" / "scripts" / "context.mjs").write_text("ok", encoding="utf-8")
+            (source / "plugin" / "skills" / "impeccable" / "reference" / "audit.md").write_text("audit", encoding="utf-8")
+            (source / "plugin" / "skills" / "impeccable" / "templates" / "design.json").write_text("{}", encoding="utf-8")
             (source / ".claude" / "skills" / "impeccable").mkdir(parents=True)
             (source / ".claude" / "skills" / "impeccable" / "SKILL.md").write_text("wrong", encoding="utf-8")
             dest = Path(tmp) / "hermes" / "skills" / "vendor" / "impeccable"
@@ -1037,6 +1062,8 @@ class CliPlanTests(unittest.TestCase):
 
             self.assertTrue((dest / "impeccable" / "SKILL.md").exists())
             self.assertTrue((dest / "impeccable" / "scripts" / "context.mjs").exists())
+            self.assertTrue((dest / "impeccable" / "reference" / "audit.md").exists())
+            self.assertTrue((dest / "impeccable" / "templates" / "design.json").exists())
             self.assertFalse((dest / ".claude").exists())
             self.assertFalse((dest / "package.json").exists())
 
