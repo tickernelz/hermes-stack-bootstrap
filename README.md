@@ -69,7 +69,7 @@ Existing `config.yaml`, `.env`, and `SOUL.md` are backed up before non-dry-run w
 | `superpowers` | optional shallow clone | prompted in TUI; flag: `--install-superpowers` |
 | HMX knowledge | optional clone | prompted in TUI; private repo; user must already have access; flag: `--install-hmx-knowledge` |
 | `impeccable` | optional shallow clone | prompted in TUI; flag: `--install-impeccable` |
-| `ponytail` | optional shallow clone | prompted in TUI; recommended default: yes; flag: `--install-ponytail` |
+| `ponytail` | stages upstream `skills/*` only | prompted in TUI; recommended default: yes; flag: `--install-ponytail`; repo tooling/hooks are not copied into Hermes skills; older bad repo-root installs are moved aside under `backups/` |
 
 ### Generated `SOUL.md` posture
 

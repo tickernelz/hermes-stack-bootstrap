@@ -49,6 +49,7 @@ HMX_KNOWLEDGE_REPO = os.environ.get(
 )
 IMPECCABLE_REPO = "https://github.com/pbakaus/impeccable"
 PONYTAIL_REPO = "https://github.com/DietrichGebert/ponytail"
+PONYTAIL_REPO_ROOT_MARKERS = ("package.json", "skills")
 SENSITIVE_ENV_KEYS = {"MNEMOSYNE_EMBEDDING_API_KEY"}
 INSTALL_MODE_LABELS = {
     "full": "Full process",
@@ -569,8 +570,8 @@ def build_plan(options: InstallerOptions) -> InstallPlan:
         steps.append(
             PlanStep(
                 "Optional recommended: install Ponytail skill pack",
-                skill_repo_clone_command(PONYTAIL_REPO, dest),
-                "Strongly recommended YAGNI/minimalism guide for keeping Hermes behavior and engineering work simple.",
+                f"stage skills from {PONYTAIL_REPO} into {shell_quote(dest)}",
+                "Copies only Ponytail's Hermes skill directories (*/SKILL.md) under skills/vendor/ponytail; repo tooling, hooks, package.json, and examples are kept out of the skills root.",
             )
         )
 
@@ -795,6 +796,75 @@ def install_skill_repo(repo_url: str, dest: Path, *, dry_run: bool) -> None:
         run_command(["git", "clone", "--depth=1", repo_url, str(dest)], dry_run=dry_run)
 
 
+def is_ponytail_repo_root(path: Path) -> bool:
+    """Return True when a previous installer cloned Ponytail's repo root into skills/vendor."""
+    return path.is_dir() and all((path / marker).exists() for marker in PONYTAIL_REPO_ROOT_MARKERS)
+
+
+def ponytail_skill_dirs(source_root: Path) -> list[Path]:
+    skills_root = source_root / "skills"
+    if not skills_root.is_dir():
+        raise ValueError(f"Ponytail repo does not contain a skills directory: {skills_root}")
+    skill_dirs = sorted(path for path in skills_root.iterdir() if (path / "SKILL.md").is_file())
+    if not skill_dirs:
+        raise ValueError(f"Ponytail repo has no Hermes skills under {skills_root}")
+    return skill_dirs
+
+
+def ponytail_repo_root_backup_path(dest: Path) -> Path:
+    if dest.parent.name == "vendor" and dest.parent.parent.name == "skills":
+        backup_root = dest.parent.parent.parent / "backups"
+    else:
+        backup_root = dest.parent / "backups"
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup = backup_root / f"{dest.name}-repo-root-backup-{timestamp}"
+    suffix = 1
+    while backup.exists():
+        backup = backup_root / f"{dest.name}-repo-root-backup-{timestamp}-{suffix}"
+        suffix += 1
+    return backup
+
+
+def move_aside_ponytail_repo_root(dest: Path) -> Path:
+    backup = ponytail_repo_root_backup_path(dest)
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(dest), str(backup))
+    return backup
+
+
+def stage_ponytail_skills(source_root: Path, dest: Path) -> None:
+    """Copy only Ponytail's Hermes skills into the vendor skill directory."""
+    skill_dirs = ponytail_skill_dirs(source_root)
+    if is_ponytail_repo_root(dest):
+        backup = move_aside_ponytail_repo_root(dest)
+        print(f"Moved incorrect Ponytail repo-root install aside: {backup}")
+
+    dest.mkdir(parents=True, exist_ok=True)
+    upstream_skill_names = {skill_dir.name for skill_dir in skill_dirs}
+    for child in dest.iterdir():
+        if child.name not in upstream_skill_names:
+            continue
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
+    for skill_dir in skill_dirs:
+        shutil.copytree(skill_dir, dest / skill_dir.name, dirs_exist_ok=True)
+
+
+def install_ponytail_skill_pack(dest: Path, *, dry_run: bool) -> None:
+    if dry_run:
+        run_command(["git", "clone", "--depth=1", PONYTAIL_REPO, "<temporary-directory>/ponytail"], dry_run=True)
+        print(f"DRY-RUN stage Ponytail Hermes skills into {dest}")
+        return
+
+    with tempfile.TemporaryDirectory(prefix="hermes-stack-ponytail-") as tmp:
+        source_root = Path(tmp) / "ponytail"
+        run_command(["git", "clone", "--depth=1", PONYTAIL_REPO, str(source_root)], dry_run=False)
+        stage_ponytail_skills(source_root, dest)
+
+
 def install_optional_skills(plan: InstallPlan) -> None:
     if plan.options.install_superpowers:
         install_skill_repo(
@@ -815,8 +885,7 @@ def install_optional_skills(plan: InstallPlan) -> None:
             dry_run=plan.options.dry_run,
         )
     if plan.options.install_ponytail:
-        install_skill_repo(
-            PONYTAIL_REPO,
+        install_ponytail_skill_pack(
             skill_vendor_dir(plan.target_home, "ponytail"),
             dry_run=plan.options.dry_run,
         )

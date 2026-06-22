@@ -16,11 +16,14 @@ from hermes_stack_bootstrap.cli import (
     build_plan,
     build_plans,
     install_mnemosyne,
+    install_optional_skills,
+    is_ponytail_repo_root,
     mnemosyne_packages_satisfied,
     mnemosyne_runtime_needs_sudo,
     parse_profiles,
     print_plan,
     main,
+    stage_ponytail_skills,
     validate_runtime_options,
     wizard,
 )
@@ -915,9 +918,86 @@ class CliPlanTests(unittest.TestCase):
             commands,
         )
         self.assertIn(
+            "stage skills from https://github.com/DietrichGebert/ponytail into /tmp/hermes/skills/vendor/ponytail",
+            commands,
+        )
+        self.assertNotIn(
             "git clone --depth=1 https://github.com/DietrichGebert/ponytail /tmp/hermes/skills/vendor/ponytail",
             commands,
         )
+
+    def test_stage_ponytail_skills_replaces_incorrect_repo_root_install(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            source_skills = source / "skills"
+            (source_skills / "ponytail").mkdir(parents=True)
+            (source_skills / "ponytail-review").mkdir(parents=True)
+            (source_skills / "ponytail" / "SKILL.md").write_text("ponytail", encoding="utf-8")
+            (source_skills / "ponytail-review" / "SKILL.md").write_text("review", encoding="utf-8")
+            (source / "package.json").write_text("{}", encoding="utf-8")
+            (source / "commands").mkdir()
+
+            dest = Path(tmp) / "hermes" / "skills" / "vendor" / "ponytail"
+            (dest / "skills" / "wrong").mkdir(parents=True)
+            (dest / "skills" / "wrong" / "SKILL.md").write_text("wrong", encoding="utf-8")
+            (dest / "package.json").write_text("{}", encoding="utf-8")
+            (dest / "commands").mkdir()
+
+            self.assertTrue(is_ponytail_repo_root(dest))
+
+            stage_ponytail_skills(source, dest)
+
+            backups = list((dest.parent.parent.parent / "backups").glob("ponytail-repo-root-backup-*"))
+            self.assertEqual(len(backups), 1)
+            self.assertTrue((backups[0] / "package.json").exists())
+            self.assertTrue((backups[0] / "commands").exists())
+            self.assertFalse((dest / "package.json").exists())
+            self.assertFalse((dest / "commands").exists())
+            self.assertFalse((dest / "skills").exists())
+            self.assertEqual((dest / "ponytail" / "SKILL.md").read_text(encoding="utf-8"), "ponytail")
+            self.assertEqual((dest / "ponytail-review" / "SKILL.md").read_text(encoding="utf-8"), "review")
+
+    def test_stage_ponytail_skills_preserves_non_upstream_custom_skills(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            (source / "skills" / "ponytail").mkdir(parents=True)
+            (source / "skills" / "ponytail" / "SKILL.md").write_text("fresh", encoding="utf-8")
+
+            dest = Path(tmp) / "hermes" / "skills" / "vendor" / "ponytail"
+            (dest / "ponytail").mkdir(parents=True)
+            (dest / "ponytail" / "SKILL.md").write_text("old", encoding="utf-8")
+            (dest / "my-custom-skill").mkdir()
+            (dest / "my-custom-skill" / "SKILL.md").write_text("custom", encoding="utf-8")
+
+            stage_ponytail_skills(source, dest)
+
+            self.assertEqual((dest / "ponytail" / "SKILL.md").read_text(encoding="utf-8"), "fresh")
+            self.assertEqual((dest / "my-custom-skill" / "SKILL.md").read_text(encoding="utf-8"), "custom")
+            self.assertFalse((dest.parent.parent.parent / "backups").exists())
+
+    def test_install_optional_skills_uses_ponytail_stager(self):
+        options = InstallerOptions(
+            base_home=Path("/tmp/hermes"),
+            profile="default",
+            yes=True,
+            dry_run=True,
+            install_ponytail=True,
+            skip_lcm=True,
+            skip_mnemosyne=True,
+            skip_progress_tail=True,
+            skip_config_env=True,
+            skip_verify=True,
+        )
+        plan = build_plan(options)
+
+        with (
+            patch("hermes_stack_bootstrap.cli.install_skill_repo") as generic_install,
+            patch("hermes_stack_bootstrap.cli.install_ponytail_skill_pack") as ponytail_install,
+        ):
+            install_optional_skills(plan)
+
+        generic_install.assert_not_called()
+        ponytail_install.assert_called_once_with(Path("/tmp/hermes/skills/vendor/ponytail"), dry_run=True)
 
     def test_interactive_wizard_prompts_for_all_optional_skill_packs(self):
         tui = FakeTui([
