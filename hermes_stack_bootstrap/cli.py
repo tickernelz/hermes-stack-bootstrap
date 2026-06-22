@@ -49,7 +49,7 @@ HMX_KNOWLEDGE_REPO = os.environ.get(
 )
 IMPECCABLE_REPO = "https://github.com/pbakaus/impeccable"
 PONYTAIL_REPO = "https://github.com/DietrichGebert/ponytail"
-PONYTAIL_REPO_ROOT_MARKERS = ("package.json", "skills")
+REPO_ROOT_SKILL_INSTALL_MARKERS = (".git", "package.json", "skills")
 SENSITIVE_ENV_KEYS = {"MNEMOSYNE_EMBEDDING_API_KEY"}
 INSTALL_MODE_LABELS = {
     "full": "Full process",
@@ -149,6 +149,15 @@ def create_tui() -> RichPromptTui:
 
 
 @dataclass(frozen=True)
+class SkillPackSpec:
+    name: str
+    repo_url: str
+    source_subdir: str = ""
+    skill_name_prefix: str = ""
+    body_token_prefixes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class InstallerOptions:
     base_home: Path
     profile: str
@@ -208,6 +217,34 @@ class InstallPlan:
     config_path: Path
     env_path: Path
     steps: tuple[PlanStep, ...]
+
+
+SUPERPOWERS_SKILL_TOKENS = (
+    "brainstorming",
+    "dispatching-parallel-agents",
+    "executing-plans",
+    "finishing-a-development-branch",
+    "receiving-code-review",
+    "requesting-code-review",
+    "subagent-driven-development",
+    "systematic-debugging",
+    "test-driven-development",
+    "using-git-worktrees",
+    "using-superpowers",
+    "verification-before-completion",
+    "writing-plans",
+    "writing-skills",
+)
+SUPERPOWERS_SKILL_PACK = SkillPackSpec(
+    name="obra-superpowers",
+    repo_url=SUPERPOWERS_REPO,
+    source_subdir="skills",
+    skill_name_prefix="superpowers-",
+    body_token_prefixes=SUPERPOWERS_SKILL_TOKENS,
+)
+HMX_KNOWLEDGE_SKILL_PACK = SkillPackSpec(name="hmx-knowledge", repo_url=HMX_KNOWLEDGE_REPO)
+IMPECCABLE_SKILL_PACK = SkillPackSpec(name="impeccable", repo_url=IMPECCABLE_REPO, source_subdir="plugin/skills")
+PONYTAIL_SKILL_PACK = SkillPackSpec(name="ponytail", repo_url=PONYTAIL_REPO, source_subdir="skills")
 
 
 _WINDOWS_DRIVE_PATH_RE = re.compile(r"^([A-Za-z]):[\\/](.*)$")
@@ -429,12 +466,8 @@ def skill_vendor_dir(target_home: Path, name: str) -> Path:
     return target_home / "skills" / "vendor" / name
 
 
-def skill_repo_clone_command(repo_url: str, dest: Path) -> str:
-    return f"git clone --depth=1 {shell_quote(repo_url)} {shell_quote(dest)}"
-
-
-def skill_repo_update_command(dest: Path) -> str:
-    return f"git -C {shell_quote(dest)} pull --ff-only"
+def skill_pack_stage_command(spec: SkillPackSpec, dest: Path) -> str:
+    return f"stage skills from {spec.repo_url} into {shell_quote(dest)}"
 
 
 def mnemosyne_pip_package_list(mode: str) -> list[str]:
@@ -535,45 +568,27 @@ def build_plan(options: InstallerOptions) -> InstallPlan:
             )
         )
 
-    if options.install_superpowers:
-        dest = skill_vendor_dir(target_home, "obra-superpowers")
-        steps.append(
-            PlanStep(
-                "Optional: install Obra Superpowers skills",
-                skill_repo_clone_command(SUPERPOWERS_REPO, dest),
-                "Installs the public Superpowers skill pack under skills/vendor/ so Hermes can discover its SKILL.md files.",
-            )
-        )
-
-    if options.install_hmx_knowledge:
-        dest = skill_vendor_dir(target_home, "hmx-knowledge")
-        steps.append(
-            PlanStep(
-                "Optional: install HMX knowledge skills",
-                skill_repo_clone_command(options.hmx_knowledge_url, dest),
-                "Private GitLab repo; use SSH agent or preconfigured HTTPS/token credentials. The installer never stores tokens.",
-            )
-        )
-
-    if options.install_impeccable:
-        dest = skill_vendor_dir(target_home, "impeccable")
-        steps.append(
-            PlanStep(
-                "Optional: install Impeccable design skill",
-                skill_repo_clone_command(IMPECCABLE_REPO, dest),
-                "Installs the public Impeccable skill repo under skills/vendor/.",
-            )
-        )
-
-    if options.install_ponytail:
-        dest = skill_vendor_dir(target_home, "ponytail")
-        steps.append(
-            PlanStep(
-                "Optional recommended: install Ponytail skill pack",
-                f"stage skills from {PONYTAIL_REPO} into {shell_quote(dest)}",
-                "Copies only Ponytail's Hermes skill directories (*/SKILL.md) under skills/vendor/ponytail; repo tooling, hooks, package.json, and examples are kept out of the skills root.",
-            )
-        )
+    skill_step_metadata = {
+        "obra-superpowers": (
+            "Optional: install Obra Superpowers skills",
+            "Stages upstream skills/* into skills/vendor/obra-superpowers as superpowers-* Hermes skills; repo tooling stays out of the skills root.",
+        ),
+        "hmx-knowledge": (
+            "Optional: install HMX knowledge skills",
+            "Private GitLab repo; use SSH agent or preconfigured HTTPS/token credentials. Stages discovered Hermes skill directories only and never stores tokens.",
+        ),
+        "impeccable": (
+            "Optional: install Impeccable design skill",
+            "Stages plugin/skills/impeccable only; repo scaffolding, Claude config, package files, and examples stay out of the skills root.",
+        ),
+        "ponytail": (
+            "Optional recommended: install Ponytail skill pack",
+            "Stages upstream skills/* only; repo tooling, hooks, package.json, docs, and examples stay out of the skills root.",
+        ),
+    }
+    for spec, dest in optional_skill_packs(options, target_home):
+        title, notes = skill_step_metadata[spec.name]
+        steps.append(PlanStep(title, skill_pack_stage_command(spec, dest), notes))
 
     final_steps = []
     if not options.skip_config_env:
@@ -788,59 +803,92 @@ def install_progress_tail(plan: InstallPlan) -> None:
     run_command(["bash", "-lc", command], dry_run=plan.options.dry_run)
 
 
-def install_skill_repo(repo_url: str, dest: Path, *, dry_run: bool) -> None:
-    if dest.exists():
-        run_command(["git", "-C", str(dest), "pull", "--ff-only"], dry_run=dry_run)
-    else:
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        run_command(["git", "clone", "--depth=1", repo_url, str(dest)], dry_run=dry_run)
+def is_repo_root_skill_install(path: Path) -> bool:
+    """Return True when an optional skill pack was incorrectly cloned as a repo root."""
+    return path.is_dir() and any((path / marker).exists() for marker in REPO_ROOT_SKILL_INSTALL_MARKERS)
 
 
-def is_ponytail_repo_root(path: Path) -> bool:
-    """Return True when a previous installer cloned Ponytail's repo root into skills/vendor."""
-    return path.is_dir() and all((path / marker).exists() for marker in PONYTAIL_REPO_ROOT_MARKERS)
+def skill_pack_source_root(source_root: Path, spec: SkillPackSpec) -> Path:
+    if spec.source_subdir:
+        root = source_root / spec.source_subdir
+        if not root.is_dir():
+            raise ValueError(f"{spec.name} repo does not contain expected skill source: {root}")
+        return root
+
+    conventional_root = source_root / "skills"
+    if conventional_root.is_dir():
+        return conventional_root
+    return source_root
 
 
-def ponytail_skill_dirs(source_root: Path) -> list[Path]:
-    skills_root = source_root / "skills"
-    if not skills_root.is_dir():
-        raise ValueError(f"Ponytail repo does not contain a skills directory: {skills_root}")
-    skill_dirs = sorted(path for path in skills_root.iterdir() if (path / "SKILL.md").is_file())
+def skill_pack_skill_dirs(source_root: Path, spec: SkillPackSpec) -> list[Path]:
+    root = skill_pack_source_root(source_root, spec)
+    if (root / "SKILL.md").is_file():
+        return [root]
+
+    skill_dirs = sorted(path for path in root.iterdir() if path.is_dir() and (path / "SKILL.md").is_file())
+    if skill_dirs:
+        return skill_dirs
+
+    excluded = {".git", ".github", "node_modules", ".venv", "venv", "__pycache__"}
+    skill_dirs = sorted(
+        path.parent
+        for path in root.rglob("SKILL.md")
+        if not any(part in excluded for part in path.parts)
+    )
     if not skill_dirs:
-        raise ValueError(f"Ponytail repo has no Hermes skills under {skills_root}")
+        raise ValueError(f"{spec.name} repo has no Hermes skill directories under {root}")
     return skill_dirs
 
 
-def ponytail_repo_root_backup_path(dest: Path) -> Path:
+def skill_pack_backup_path(dest: Path, spec: SkillPackSpec) -> Path:
     if dest.parent.name == "vendor" and dest.parent.parent.name == "skills":
         backup_root = dest.parent.parent.parent / "backups"
     else:
         backup_root = dest.parent / "backups"
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    backup = backup_root / f"{dest.name}-repo-root-backup-{timestamp}"
+    backup = backup_root / f"{spec.name}-repo-root-backup-{timestamp}"
     suffix = 1
     while backup.exists():
-        backup = backup_root / f"{dest.name}-repo-root-backup-{timestamp}-{suffix}"
+        backup = backup_root / f"{spec.name}-repo-root-backup-{timestamp}-{suffix}"
         suffix += 1
     return backup
 
 
-def move_aside_ponytail_repo_root(dest: Path) -> Path:
-    backup = ponytail_repo_root_backup_path(dest)
+def move_aside_repo_root_skill_install(dest: Path, spec: SkillPackSpec) -> Path:
+    backup = skill_pack_backup_path(dest, spec)
     backup.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(dest), str(backup))
     return backup
 
 
-def stage_ponytail_skills(source_root: Path, dest: Path) -> None:
-    """Copy only Ponytail's Hermes skills into the vendor skill directory."""
-    skill_dirs = ponytail_skill_dirs(source_root)
-    if is_ponytail_repo_root(dest):
-        backup = move_aside_ponytail_repo_root(dest)
-        print(f"Moved incorrect Ponytail repo-root install aside: {backup}")
+def staged_skill_dir_name(skill_dir: Path, spec: SkillPackSpec) -> str:
+    name = skill_dir.name
+    if spec.skill_name_prefix and not name.startswith(spec.skill_name_prefix):
+        name = f"{spec.skill_name_prefix}{name}"
+    return name
+
+
+def rewrite_staged_skill_manifest(path: Path, target_name: str, spec: SkillPackSpec) -> None:
+    content = path.read_text(encoding="utf-8")
+    if spec.skill_name_prefix:
+        content = re.sub(r"(?m)^name:\s*.*$", f"name: {target_name}", content, count=1)
+        for token in spec.body_token_prefixes:
+            replacement = f"{spec.skill_name_prefix}{token}"
+            pattern = rf"(?<!{re.escape(spec.skill_name_prefix)})\b{re.escape(token)}\b"
+            content = re.sub(pattern, replacement, content)
+    path.write_text(content, encoding="utf-8")
+
+
+def stage_skill_pack(source_root: Path, dest: Path, spec: SkillPackSpec) -> None:
+    """Copy only Hermes skill directories from an upstream repo into a vendor skill directory."""
+    skill_dirs = skill_pack_skill_dirs(source_root, spec)
+    if is_repo_root_skill_install(dest):
+        backup = move_aside_repo_root_skill_install(dest, spec)
+        print(f"Moved incorrect {spec.name} repo-root install aside: {backup}")
 
     dest.mkdir(parents=True, exist_ok=True)
-    upstream_skill_names = {skill_dir.name for skill_dir in skill_dirs}
+    upstream_skill_names = {staged_skill_dir_name(skill_dir, spec) for skill_dir in skill_dirs}
     for child in dest.iterdir():
         if child.name not in upstream_skill_names:
             continue
@@ -850,45 +898,45 @@ def stage_ponytail_skills(source_root: Path, dest: Path) -> None:
             child.unlink()
 
     for skill_dir in skill_dirs:
-        shutil.copytree(skill_dir, dest / skill_dir.name, dirs_exist_ok=True)
+        target_name = staged_skill_dir_name(skill_dir, spec)
+        target = dest / target_name
+        shutil.copytree(skill_dir, target, dirs_exist_ok=True)
+        rewrite_staged_skill_manifest(target / "SKILL.md", target_name, spec)
 
 
-def install_ponytail_skill_pack(dest: Path, *, dry_run: bool) -> None:
+def install_skill_pack(spec: SkillPackSpec, dest: Path, *, dry_run: bool) -> None:
     if dry_run:
-        run_command(["git", "clone", "--depth=1", PONYTAIL_REPO, "<temporary-directory>/ponytail"], dry_run=True)
-        print(f"DRY-RUN stage Ponytail Hermes skills into {dest}")
+        run_command(["git", "clone", "--depth=1", spec.repo_url, f"<temporary-directory>/{spec.name}"], dry_run=True)
+        print(f"DRY-RUN stage Hermes skills from {spec.repo_url} into {dest}")
         return
 
-    with tempfile.TemporaryDirectory(prefix="hermes-stack-ponytail-") as tmp:
-        source_root = Path(tmp) / "ponytail"
-        run_command(["git", "clone", "--depth=1", PONYTAIL_REPO, str(source_root)], dry_run=False)
-        stage_ponytail_skills(source_root, dest)
+    with tempfile.TemporaryDirectory(prefix=f"hermes-stack-{spec.name}-") as tmp:
+        source_root = Path(tmp) / spec.name
+        run_command(["git", "clone", "--depth=1", spec.repo_url, str(source_root)], dry_run=False)
+        stage_skill_pack(source_root, dest, spec)
+
+
+def optional_skill_packs(options: InstallerOptions, target_home: Path) -> list[tuple[SkillPackSpec, Path]]:
+    packs: list[tuple[SkillPackSpec, Path]] = []
+    if options.install_superpowers:
+        packs.append((SUPERPOWERS_SKILL_PACK, skill_vendor_dir(target_home, "obra-superpowers")))
+    if options.install_hmx_knowledge:
+        packs.append(
+            (
+                SkillPackSpec(name="hmx-knowledge", repo_url=options.hmx_knowledge_url),
+                skill_vendor_dir(target_home, "hmx-knowledge"),
+            )
+        )
+    if options.install_impeccable:
+        packs.append((IMPECCABLE_SKILL_PACK, skill_vendor_dir(target_home, "impeccable")))
+    if options.install_ponytail:
+        packs.append((PONYTAIL_SKILL_PACK, skill_vendor_dir(target_home, "ponytail")))
+    return packs
 
 
 def install_optional_skills(plan: InstallPlan) -> None:
-    if plan.options.install_superpowers:
-        install_skill_repo(
-            SUPERPOWERS_REPO,
-            skill_vendor_dir(plan.target_home, "obra-superpowers"),
-            dry_run=plan.options.dry_run,
-        )
-    if plan.options.install_hmx_knowledge:
-        install_skill_repo(
-            plan.options.hmx_knowledge_url,
-            skill_vendor_dir(plan.target_home, "hmx-knowledge"),
-            dry_run=plan.options.dry_run,
-        )
-    if plan.options.install_impeccable:
-        install_skill_repo(
-            IMPECCABLE_REPO,
-            skill_vendor_dir(plan.target_home, "impeccable"),
-            dry_run=plan.options.dry_run,
-        )
-    if plan.options.install_ponytail:
-        install_ponytail_skill_pack(
-            skill_vendor_dir(plan.target_home, "ponytail"),
-            dry_run=plan.options.dry_run,
-        )
+    for spec, dest in optional_skill_packs(plan.options, plan.target_home):
+        install_skill_pack(spec, dest, dry_run=plan.options.dry_run)
 
 
 def merge_config_and_env(plan: InstallPlan) -> None:

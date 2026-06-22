@@ -16,14 +16,15 @@ from hermes_stack_bootstrap.cli import (
     build_plan,
     build_plans,
     install_mnemosyne,
+    SkillPackSpec,
     install_optional_skills,
-    is_ponytail_repo_root,
+    is_repo_root_skill_install,
     mnemosyne_packages_satisfied,
     mnemosyne_runtime_needs_sudo,
     parse_profiles,
     print_plan,
     main,
-    stage_ponytail_skills,
+    stage_skill_pack,
     validate_runtime_options,
     wizard,
 )
@@ -373,11 +374,11 @@ class CliPlanTests(unittest.TestCase):
         default_commands = [step.command for step in plans[0].steps if step.command]
         work_commands = [step.command for step in plans[1].steps if step.command]
         self.assertIn(
-            "git clone --depth=1 https://github.com/obra/superpowers /tmp/hermes/skills/vendor/obra-superpowers",
+            "stage skills from https://github.com/obra/superpowers into /tmp/hermes/skills/vendor/obra-superpowers",
             default_commands,
         )
         self.assertIn(
-            "git clone --depth=1 https://github.com/obra/superpowers /tmp/hermes/profiles/work/skills/vendor/obra-superpowers",
+            "stage skills from https://github.com/obra/superpowers into /tmp/hermes/profiles/work/skills/vendor/obra-superpowers",
             work_commands,
         )
 
@@ -906,15 +907,15 @@ class CliPlanTests(unittest.TestCase):
         commands = [step.command for step in plan.steps if step.command]
 
         self.assertIn(
-            "git clone --depth=1 https://github.com/obra/superpowers /tmp/hermes/skills/vendor/obra-superpowers",
+            "stage skills from https://github.com/obra/superpowers into /tmp/hermes/skills/vendor/obra-superpowers",
             commands,
         )
         self.assertIn(
-            "git clone --depth=1 git@gitlab.com:hashmicro1/hmx/hmx-knowledge.git /tmp/hermes/skills/vendor/hmx-knowledge",
+            "stage skills from git@gitlab.com:hashmicro1/hmx/hmx-knowledge.git into /tmp/hermes/skills/vendor/hmx-knowledge",
             commands,
         )
         self.assertIn(
-            "git clone --depth=1 https://github.com/pbakaus/impeccable /tmp/hermes/skills/vendor/impeccable",
+            "stage skills from https://github.com/pbakaus/impeccable into /tmp/hermes/skills/vendor/impeccable",
             commands,
         )
         self.assertIn(
@@ -922,11 +923,23 @@ class CliPlanTests(unittest.TestCase):
             commands,
         )
         self.assertNotIn(
+            "git clone --depth=1 https://github.com/obra/superpowers /tmp/hermes/skills/vendor/obra-superpowers",
+            commands,
+        )
+        self.assertNotIn(
+            "git clone --depth=1 git@gitlab.com:hashmicro1/hmx/hmx-knowledge.git /tmp/hermes/skills/vendor/hmx-knowledge",
+            commands,
+        )
+        self.assertNotIn(
+            "git clone --depth=1 https://github.com/pbakaus/impeccable /tmp/hermes/skills/vendor/impeccable",
+            commands,
+        )
+        self.assertNotIn(
             "git clone --depth=1 https://github.com/DietrichGebert/ponytail /tmp/hermes/skills/vendor/ponytail",
             commands,
         )
 
-    def test_stage_ponytail_skills_replaces_incorrect_repo_root_install(self):
+    def test_stage_skill_pack_replaces_incorrect_repo_root_install(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             source_skills = source / "skills"
@@ -942,10 +955,11 @@ class CliPlanTests(unittest.TestCase):
             (dest / "skills" / "wrong" / "SKILL.md").write_text("wrong", encoding="utf-8")
             (dest / "package.json").write_text("{}", encoding="utf-8")
             (dest / "commands").mkdir()
+            spec = SkillPackSpec("ponytail", "https://example.invalid/ponytail", source_subdir="skills")
 
-            self.assertTrue(is_ponytail_repo_root(dest))
+            self.assertTrue(is_repo_root_skill_install(dest))
 
-            stage_ponytail_skills(source, dest)
+            stage_skill_pack(source, dest, spec)
 
             backups = list((dest.parent.parent.parent / "backups").glob("ponytail-repo-root-backup-*"))
             self.assertEqual(len(backups), 1)
@@ -957,7 +971,7 @@ class CliPlanTests(unittest.TestCase):
             self.assertEqual((dest / "ponytail" / "SKILL.md").read_text(encoding="utf-8"), "ponytail")
             self.assertEqual((dest / "ponytail-review" / "SKILL.md").read_text(encoding="utf-8"), "review")
 
-    def test_stage_ponytail_skills_preserves_non_upstream_custom_skills(self):
+    def test_stage_skill_pack_preserves_non_upstream_custom_skills(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"
             (source / "skills" / "ponytail").mkdir(parents=True)
@@ -968,19 +982,91 @@ class CliPlanTests(unittest.TestCase):
             (dest / "ponytail" / "SKILL.md").write_text("old", encoding="utf-8")
             (dest / "my-custom-skill").mkdir()
             (dest / "my-custom-skill" / "SKILL.md").write_text("custom", encoding="utf-8")
+            spec = SkillPackSpec("ponytail", "https://example.invalid/ponytail", source_subdir="skills")
 
-            stage_ponytail_skills(source, dest)
+            stage_skill_pack(source, dest, spec)
 
             self.assertEqual((dest / "ponytail" / "SKILL.md").read_text(encoding="utf-8"), "fresh")
             self.assertEqual((dest / "my-custom-skill" / "SKILL.md").read_text(encoding="utf-8"), "custom")
             self.assertFalse((dest.parent.parent.parent / "backups").exists())
 
-    def test_install_optional_skills_uses_ponytail_stager(self):
+    def test_stage_skill_pack_prefixes_superpowers_skill_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            skill_dir = source / "skills" / "brainstorming"
+            skill_dir.mkdir(parents=True)
+            (skill_dir / "SKILL.md").write_text(
+                "---\nname: brainstorming\ndescription: Think first\n---\n\nUse test-driven-development when coding.\n",
+                encoding="utf-8",
+            )
+            (skill_dir / "visual-companion.md").write_text("helper", encoding="utf-8")
+            dest = Path(tmp) / "hermes" / "skills" / "vendor" / "obra-superpowers"
+            spec = SkillPackSpec(
+                "obra-superpowers",
+                "https://example.invalid/superpowers",
+                source_subdir="skills",
+                skill_name_prefix="superpowers-",
+                body_token_prefixes=("test-driven-development",),
+            )
+
+            stage_skill_pack(source, dest, spec)
+
+            staged = dest / "superpowers-brainstorming"
+            self.assertTrue((staged / "SKILL.md").exists())
+            self.assertTrue((staged / "visual-companion.md").exists())
+            content = (staged / "SKILL.md").read_text(encoding="utf-8")
+            self.assertIn("name: superpowers-brainstorming", content)
+            self.assertIn("superpowers-test-driven-development", content)
+            self.assertFalse((dest / "package.json").exists())
+
+    def test_stage_skill_pack_uses_configured_impeccable_skill_source(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            (source / "plugin" / "skills" / "impeccable" / "scripts").mkdir(parents=True)
+            (source / "plugin" / "skills" / "impeccable" / "SKILL.md").write_text(
+                "---\nname: impeccable\ndescription: Design skill\n---\n\nRun scripts/context.mjs.\n",
+                encoding="utf-8",
+            )
+            (source / "plugin" / "skills" / "impeccable" / "scripts" / "context.mjs").write_text("ok", encoding="utf-8")
+            (source / ".claude" / "skills" / "impeccable").mkdir(parents=True)
+            (source / ".claude" / "skills" / "impeccable" / "SKILL.md").write_text("wrong", encoding="utf-8")
+            dest = Path(tmp) / "hermes" / "skills" / "vendor" / "impeccable"
+            spec = SkillPackSpec("impeccable", "https://example.invalid/impeccable", source_subdir="plugin/skills")
+
+            stage_skill_pack(source, dest, spec)
+
+            self.assertTrue((dest / "impeccable" / "SKILL.md").exists())
+            self.assertTrue((dest / "impeccable" / "scripts" / "context.mjs").exists())
+            self.assertFalse((dest / ".claude").exists())
+            self.assertFalse((dest / "package.json").exists())
+
+    def test_stage_skill_pack_discovers_private_repo_skills_when_no_source_subdir_is_configured(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"
+            source.mkdir()
+            (source / "README.md").write_text("not a skill", encoding="utf-8")
+            (source / "skills" / "hmx-one").mkdir(parents=True)
+            (source / "skills" / "hmx-one" / "SKILL.md").write_text(
+                "---\nname: hmx-one\ndescription: HMX\n---\n",
+                encoding="utf-8",
+            )
+            dest = Path(tmp) / "hermes" / "skills" / "vendor" / "hmx-knowledge"
+            spec = SkillPackSpec("hmx-knowledge", "git@example.invalid:hmx.git")
+
+            stage_skill_pack(source, dest, spec)
+
+            self.assertTrue((dest / "hmx-one" / "SKILL.md").exists())
+            self.assertFalse((dest / "README.md").exists())
+
+    def test_install_optional_skills_uses_skill_pack_stagers(self):
         options = InstallerOptions(
             base_home=Path("/tmp/hermes"),
             profile="default",
             yes=True,
             dry_run=True,
+            install_superpowers=True,
+            install_hmx_knowledge=True,
+            install_impeccable=True,
             install_ponytail=True,
             skip_lcm=True,
             skip_mnemosyne=True,
@@ -990,14 +1076,20 @@ class CliPlanTests(unittest.TestCase):
         )
         plan = build_plan(options)
 
-        with (
-            patch("hermes_stack_bootstrap.cli.install_skill_repo") as generic_install,
-            patch("hermes_stack_bootstrap.cli.install_ponytail_skill_pack") as ponytail_install,
-        ):
+        with patch("hermes_stack_bootstrap.cli.install_skill_pack") as install_pack:
             install_optional_skills(plan)
 
-        generic_install.assert_not_called()
-        ponytail_install.assert_called_once_with(Path("/tmp/hermes/skills/vendor/ponytail"), dry_run=True)
+        calls = [(call.args[0].name, call.args[1]) for call in install_pack.call_args_list]
+        self.assertEqual(
+            calls,
+            [
+                ("obra-superpowers", Path("/tmp/hermes/skills/vendor/obra-superpowers")),
+                ("hmx-knowledge", Path("/tmp/hermes/skills/vendor/hmx-knowledge")),
+                ("impeccable", Path("/tmp/hermes/skills/vendor/impeccable")),
+                ("ponytail", Path("/tmp/hermes/skills/vendor/ponytail")),
+            ],
+        )
+        self.assertTrue(all(call.kwargs == {"dry_run": True} for call in install_pack.call_args_list))
 
     def test_interactive_wizard_prompts_for_all_optional_skill_packs(self):
         tui = FakeTui([

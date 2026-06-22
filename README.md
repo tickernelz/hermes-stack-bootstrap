@@ -14,19 +14,19 @@ It installs the stack into your own Hermes profile. It does **not** ask you to c
 ## Quick install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.1.6/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.1.7/install.sh | bash
 ```
 
 Dry run first:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.1.6/install.sh | bash -s -- --dry-run
+curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.1.7/install.sh | bash -s -- --dry-run
 ```
 
 Inspect before running:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.1.6/install.sh
+curl -fsSLO https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.1.7/install.sh
 less install.sh
 bash install.sh --dry-run
 bash install.sh
@@ -66,9 +66,9 @@ Existing `config.yaml`, `.env`, and `SOUL.md` are backed up before non-dry-run w
 | `mnemosyne-memory` | installs package set into Hermes runtime Python | default mode: `hybrid` |
 | `hermes-progress-tail` | runs upstream release installer | pin with `--progress-tail-ref` |
 | `SOUL.md` | optional `hermes chat -q` generation | asks agent name, user name, communication style, and language; defaults keep lazy users moving |
-| `superpowers` | optional shallow clone | prompted in TUI; flag: `--install-superpowers` |
-| HMX knowledge | optional clone | prompted in TUI; private repo; user must already have access; flag: `--install-hmx-knowledge` |
-| `impeccable` | optional shallow clone | prompted in TUI; flag: `--install-impeccable` |
+| `superpowers` | stages upstream `skills/*` as `superpowers-*` Hermes skills | prompted in TUI; flag: `--install-superpowers`; repo tooling is not copied into Hermes skills; older bad repo-root installs are moved aside under `backups/` |
+| HMX knowledge | stages discovered Hermes skill dirs | prompted in TUI; private repo; user must already have access; flag: `--install-hmx-knowledge`; tokens are never stored; older bad repo-root installs are moved aside under `backups/` |
+| `impeccable` | stages `plugin/skills/impeccable` only | prompted in TUI; flag: `--install-impeccable`; repo scaffolding/Claude config/package files are not copied into Hermes skills; older bad repo-root installs are moved aside under `backups/` |
 | `ponytail` | stages upstream `skills/*` only | prompted in TUI; recommended default: yes; flag: `--install-ponytail`; repo tooling/hooks are not copied into Hermes skills; older bad repo-root installs are moved aside under `backups/` |
 
 ### Generated `SOUL.md` posture
