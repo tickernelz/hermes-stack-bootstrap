@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Callable, TypeVar
+from typing import Callable, Iterator, TypeVar
 
 T = TypeVar("T")
 
@@ -56,3 +58,36 @@ def retry_with_backoff(
             )
             time.sleep(delay)
     raise RuntimeError(f"{label} failed after {max_attempts} attempts") from last_exc
+
+
+@contextmanager
+def spinner(message: str = "Working") -> Iterator[None]:
+    """Show a threaded spinner during long operations in interactive mode.
+
+    Only activates when stdout is a TTY. In non-interactive mode (piped,
+    redirected, or dry-run), yields silently without output.
+    """
+    if not sys.stdout.isatty():
+        yield
+        return
+
+    stop_event = threading.Event()
+    chars = "|/-\\"
+
+    def _spin() -> None:
+        i = 0
+        while not stop_event.is_set():
+            sys.stdout.write(f"\r{message} {chars[i % len(chars)]}")
+            sys.stdout.flush()
+            time.sleep(0.1)
+            i += 1
+
+    thread = threading.Thread(target=_spin, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        stop_event.set()
+        thread.join(timeout=2)
+        sys.stdout.write("\r" + " " * (len(message) + 4) + "\r")
+        sys.stdout.flush()

@@ -56,14 +56,24 @@ def install_lcm(plan: InstallPlan) -> None:
     if lcm_dir.exists():
         retry_with_backoff(
             lambda: run_command(
-                ["git", "-C", str(lcm_dir), "pull", "--ff-only"], dry_run=plan.options.dry_run, timeout=600
+                ["git", "-C", str(lcm_dir), "pull", "--ff-only"],
+                dry_run=plan.options.dry_run,
+                timeout=600,
+                show_spinner=True,
+                spinner_message="Updating hermes-lcm",
             ),
             label="git pull (hermes-lcm)",
         )
     else:
         lcm_dir.parent.mkdir(parents=True, exist_ok=True)
         retry_with_backoff(
-            lambda: run_command(["git", "clone", LCM_REPO, str(lcm_dir)], dry_run=plan.options.dry_run, timeout=600),
+            lambda: run_command(
+                ["git", "clone", LCM_REPO, str(lcm_dir)],
+                dry_run=plan.options.dry_run,
+                timeout=600,
+                show_spinner=True,
+                spinner_message="Cloning hermes-lcm",
+            ),
             label="git clone (hermes-lcm)",
         )
 
@@ -154,7 +164,7 @@ def install_mnemosyne(plan: InstallPlan) -> None:
             run_command(["sudo", "-v"], dry_run=False)
             run_command(sudo_command, dry_run=False, timeout=600)
         else:
-            run_command(pip_command, dry_run=False, timeout=600)
+            run_command(pip_command, dry_run=False, timeout=600, show_spinner=True, spinner_message="Installing Mnemosyne packages")
     run_command(
         [str(hermes_py), "-m", "mnemosyne.install"],
         dry_run=plan.options.dry_run,
