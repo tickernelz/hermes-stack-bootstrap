@@ -61,12 +61,23 @@ class ProviderSetupTests(unittest.TestCase):
         existing = {
             "custom_providers": [
                 {"name": "other", "base_url": "https://other.example/v1", "key_env": "OTHER_KEY"},
-                {"name": "xai-hashmicro", "base_url": "https://old.example/v1", "key_env": "OLD_KEY", "models": {"old": {}}},
+                {
+                    "name": "xai-hashmicro",
+                    "base_url": "https://old.example/v1",
+                    "key_env": "OLD_KEY",
+                    "models": {"old": {}},
+                },
             ],
             "model": {"provider": "openrouter", "default": "old-main", "context_length": 123, "keep": "value"},
             "delegation": {"provider": "openrouter", "model": "old-child", "max_iterations": 77},
             "auxiliary": {
-                "compression": {"provider": "custom", "model": "old", "context_length": 123, "base_url": "https://stale.example/v1", "api_key": "stale"},
+                "compression": {
+                    "provider": "custom",
+                    "model": "old",
+                    "context_length": 123,
+                    "base_url": "https://stale.example/v1",
+                    "api_key": "stale",
+                },
                 "vision": {"provider": "auto", "model": ""},
             },
         }
@@ -114,7 +125,9 @@ class ProviderSetupTests(unittest.TestCase):
         setup = HashmicroProviderSetup(enabled=True, api_key="secret")
 
         self.assertEqual(build_hashmicro_env_values(setup), {"XAI_HASHMICRO_API_KEY": "secret"})
-        self.assertEqual(secret_env_keys({"XAI_HASHMICRO_API_KEY": "secret", "SAFE": "value"}), {"XAI_HASHMICRO_API_KEY"})
+        self.assertEqual(
+            secret_env_keys({"XAI_HASHMICRO_API_KEY": "secret", "SAFE": "value"}), {"XAI_HASHMICRO_API_KEY"}
+        )
         self.assertEqual(build_hashmicro_env_values(HashmicroProviderSetup(enabled=True, api_key="")), {})
 
     def test_parse_aux_model_overrides_validates_task_names_and_shape(self):

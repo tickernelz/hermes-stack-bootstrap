@@ -166,9 +166,7 @@ def build_env_values(
             values["MNEMOSYNE_EMBEDDING_MODEL"] = embedding_values["mnemosyne_embedding_model"]
             values["MNEMOSYNE_EMBEDDING_DIM"] = embedding_values["mnemosyne_embedding_dim"]
 
-    values["MNEMOSYNE_DATA_DIR"] = mnemosyne_data_dir or str(
-        Path(home).expanduser() / "mnemosyne" / "data"
-    )
+    values["MNEMOSYNE_DATA_DIR"] = mnemosyne_data_dir or str(Path(home).expanduser() / "mnemosyne" / "data")
     return values
 
 
@@ -177,12 +175,7 @@ def quote_env_value(value: str) -> str:
         return '""'
     if _SAFE_VALUE.match(value):
         return value
-    escaped = (
-        value.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("$", "\\$")
-        .replace("`", "\\`")
-    )
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
     return f'"{escaped}"'
 
 

@@ -329,9 +329,7 @@ def scan_filesystem_for_hermes(
             continue
         queue.extend(
             _sort_dirs(
-                child
-                for child in children
-                if not _should_skip_dir(child, skip_root_prefixes=not explicit_roots)
+                child for child in children if not _should_skip_dir(child, skip_root_prefixes=not explicit_roots)
             )
         )
 

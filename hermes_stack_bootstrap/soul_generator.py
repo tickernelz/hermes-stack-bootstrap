@@ -10,9 +10,7 @@ from pathlib import Path
 
 
 MAX_SOUL_CHARS = 12_000
-DEFAULT_SOUL_COMMUNICATION_STYLE = (
-    "Direct, pragmatic, concise, technically honest, warm enough, no fluff or sycophancy"
-)
+DEFAULT_SOUL_COMMUNICATION_STYLE = "Direct, pragmatic, concise, technically honest, warm enough, no fluff or sycophancy"
 DEFAULT_SOUL_LANGUAGE = "Match the user's language; use English for code, APIs, commands, and technical identifiers"
 REQUIRED_SOUL_SECTIONS = (
     "Identity",

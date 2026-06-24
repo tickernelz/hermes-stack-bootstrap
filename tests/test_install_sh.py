@@ -93,7 +93,10 @@ exit 0
 
             lines = log.read_text(encoding="utf-8").splitlines()
         self.assertEqual(lines.count("pip-install"), 1)
-        self.assertIn(str(tmp / "cache" / "bootstrap-venv-py-unknown"), "\n".join(line for line in lines if line.startswith("pip-virtual-env=")))
+        self.assertIn(
+            str(tmp / "cache" / "bootstrap-venv-py-unknown"),
+            "\n".join(line for line in lines if line.startswith("pip-virtual-env=")),
+        )
         self.assertIn("pip-pythonpath=", lines)
         self.assertIn("pip-version-check=1", lines)
         self.assertEqual(len([line for line in lines if line.startswith("runtime -m venv")]), 1)

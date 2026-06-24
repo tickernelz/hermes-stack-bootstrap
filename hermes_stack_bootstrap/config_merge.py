@@ -121,9 +121,7 @@ def build_target_config(existing: dict[str, Any] | None) -> dict[str, Any]:
     cfg: dict[str, Any] = deepcopy(existing or {})
 
     plugins = _ensure_mapping(cfg.get("plugins"))
-    plugins["enabled"] = _append_unique(
-        _ensure_list(plugins.get("enabled")), REQUIRED_PLUGINS
-    )
+    plugins["enabled"] = _append_unique(_ensure_list(plugins.get("enabled")), REQUIRED_PLUGINS)
     cfg["plugins"] = plugins
 
     context = _ensure_mapping(cfg.get("context"))
@@ -157,8 +155,7 @@ def _yaml_module():
         import yaml  # type: ignore
     except ImportError as exc:  # pragma: no cover - environment dependent
         raise RuntimeError(
-            "PyYAML is required to edit config.yaml. Run this installer with "
-            "Hermes' runtime Python or install PyYAML."
+            "PyYAML is required to edit config.yaml. Run this installer with Hermes' runtime Python or install PyYAML."
         ) from exc
     return yaml
 

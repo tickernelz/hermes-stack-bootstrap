@@ -95,7 +95,7 @@ class FakeTui:
         self.events.append(("runtime", runtime.hermes_bin, runtime.hermes_python))
 
 
-class CliPlanTests(unittest.TestCase):
+class CliPlanTestsPart1(unittest.TestCase):
     def test_base_home_from_config_path_supports_default_profile(self):
         self.assertEqual(
             base_home_from_config_path("/mnt/hermes-runtime/config.yaml"),
@@ -133,15 +133,17 @@ class CliPlanTests(unittest.TestCase):
             (base_home / "config.yaml").write_text("model: {}\n", encoding="utf-8")
             (base_home / "profiles" / "work").mkdir(parents=True)
             (base_home / "profiles" / "work" / "config.yaml").write_text("model: {}\n", encoding="utf-8")
-            tui = FakeTui([
-                "Plugin & skill only",
-                None,  # base home
-                ["default", "work"],  # profiles via multi-select
-                False,  # skip Superpowers
-                False,  # skip HMX knowledge
-                False,  # skip Impeccable
-                False,  # skip Ponytail
-            ])
+            tui = FakeTui(
+                [
+                    "Plugin & skill only",
+                    None,  # base home
+                    ["default", "work"],  # profiles via multi-select
+                    False,  # skip Superpowers
+                    False,  # skip HMX knowledge
+                    False,  # skip Impeccable
+                    False,  # skip Ponytail
+                ]
+            )
             with (
                 patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=base_home),
                 patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
@@ -149,7 +151,9 @@ class CliPlanTests(unittest.TestCase):
                 options = wizard([], ui=tui)
 
         self.assertEqual(options.profile, "default,work")
-        profile_events = [event for event in tui.events if event[0] == "multi_select" and event[1] == "Target profile(s)"]
+        profile_events = [
+            event for event in tui.events if event[0] == "multi_select" and event[1] == "Target profile(s)"
+        ]
         self.assertEqual(len(profile_events), 1)
         self.assertEqual(profile_events[0][2], ("default", "work"))
         text_prompts = [event[1] for event in tui.events if event[0] == "text"]
@@ -178,19 +182,21 @@ class CliPlanTests(unittest.TestCase):
         self.assertTrue(soul_options.skip_verify)
 
     def test_interactive_install_mode_selection_does_not_keep_env_default_skip_flags(self):
-        tui = FakeTui([
-            "Full process",
-            None,  # base home
-            None,  # profiles
-            False,  # skip HashMicro provider setup
-            "hybrid",
-            "",  # lcm summary
-            "",  # lcm expansion
-            False,  # skip Superpowers
-            False,  # skip HMX knowledge
-            False,  # skip Impeccable
-            False,  # skip Ponytail
-        ])
+        tui = FakeTui(
+            [
+                "Full process",
+                None,  # base home
+                None,  # profiles
+                False,  # skip HashMicro provider setup
+                "hybrid",
+                "",  # lcm summary
+                "",  # lcm expansion
+                False,  # skip Superpowers
+                False,  # skip HMX knowledge
+                False,  # skip Impeccable
+                False,  # skip Ponytail
+            ]
+        )
         with (
             patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
             patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
@@ -206,15 +212,17 @@ class CliPlanTests(unittest.TestCase):
         self.assertFalse(options.generate_soul)
 
     def test_interactive_wizard_prompts_for_run_mode_first(self):
-        tui = FakeTui([
-            "Plugin & skill only",
-            None,  # base home
-            None,  # profiles
-            False,  # skip Superpowers
-            False,  # skip HMX knowledge
-            False,  # skip Impeccable
-            False,  # skip Ponytail
-        ])
+        tui = FakeTui(
+            [
+                "Plugin & skill only",
+                None,  # base home
+                None,  # profiles
+                False,  # skip Superpowers
+                False,  # skip HMX knowledge
+                False,  # skip Impeccable
+                False,  # skip Ponytail
+            ]
+        )
         with (
             patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
             patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
@@ -231,11 +239,13 @@ class CliPlanTests(unittest.TestCase):
         self.assertFalse(options.skip_progress_tail)
 
     def test_interactive_wizard_soul_only_mode_skips_install_without_identity_prompt(self):
-        tui = FakeTui([
-            "Generate SOUL.md only",
-            None,  # base home
-            None,  # profiles
-        ])
+        tui = FakeTui(
+            [
+                "Generate SOUL.md only",
+                None,  # base home
+                None,  # profiles
+            ]
+        )
         with (
             patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
             patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
@@ -294,26 +304,31 @@ class CliPlanTests(unittest.TestCase):
                 skip_config_env=True,
             )
             plan = build_plan(options)
-            tui = FakeTui([
-                True,  # apply plan
-                True,  # generate SOUL after install
-                "Gatot",
-                "Zhafron",
-                None,  # communication style default
-                None,  # language default
-            ])
+            tui = FakeTui(
+                [
+                    True,  # apply plan
+                    True,  # generate SOUL after install
+                    "Gatot",
+                    "Zhafron",
+                    None,  # communication style default
+                    None,  # language default
+                ]
+            )
             calls = []
 
             def record(name):
                 def inner(*_args, **_kwargs):
                     calls.append(name)
+
                 return inner
 
             with (
                 patch("hermes_stack_bootstrap.cli.install_lcm", side_effect=record("install_lcm")),
                 patch("hermes_stack_bootstrap.cli.install_mnemosyne", side_effect=record("install_mnemosyne")),
                 patch("hermes_stack_bootstrap.cli.install_progress_tail", side_effect=record("install_progress_tail")),
-                patch("hermes_stack_bootstrap.cli.install_optional_skills", side_effect=record("install_optional_skills")),
+                patch(
+                    "hermes_stack_bootstrap.cli.install_optional_skills", side_effect=record("install_optional_skills")
+                ),
                 patch("hermes_stack_bootstrap.cli.merge_config_and_env", side_effect=record("merge_config_and_env")),
                 patch("hermes_stack_bootstrap.cli.run_verification", side_effect=record("verify")),
                 patch("hermes_stack_bootstrap.cli.apply_soul_generation", side_effect=record("soul")) as soul_mock,
@@ -345,21 +360,26 @@ class CliPlanTests(unittest.TestCase):
                 hermes_python=Path("/tmp/hermes-python"),
             )
             plan = build_plan(options)
-            tui = FakeTui([
-                True,  # apply plan
-                True,  # overwrite SOUL.md after install/verify
-            ])
+            tui = FakeTui(
+                [
+                    True,  # apply plan
+                    True,  # overwrite SOUL.md after install/verify
+                ]
+            )
 
             def record(name):
                 def inner(*_args, **_kwargs):
                     tui.events.append(("call", name))
+
                 return inner
 
             with (
                 patch("hermes_stack_bootstrap.cli.install_lcm", side_effect=record("install_lcm")),
                 patch("hermes_stack_bootstrap.cli.install_mnemosyne", side_effect=record("install_mnemosyne")),
                 patch("hermes_stack_bootstrap.cli.install_progress_tail", side_effect=record("install_progress_tail")),
-                patch("hermes_stack_bootstrap.cli.install_optional_skills", side_effect=record("install_optional_skills")),
+                patch(
+                    "hermes_stack_bootstrap.cli.install_optional_skills", side_effect=record("install_optional_skills")
+                ),
                 patch("hermes_stack_bootstrap.cli.merge_config_and_env", side_effect=record("merge_config_and_env")),
                 patch("hermes_stack_bootstrap.cli.run_verification", side_effect=record("verify")),
                 patch("hermes_stack_bootstrap.cli.apply_soul_generation", side_effect=record("soul")),
@@ -411,7 +431,9 @@ class CliPlanTests(unittest.TestCase):
                 self.assertNotIn(("status_stop", "Generating SOUL.md with Hermes AI backend..."), tui.events)
                 return valid_soul
 
-            with patch("hermes_stack_bootstrap.cli.generate_soul_with_hermes", side_effect=generate_with_status_assertion):
+            with patch(
+                "hermes_stack_bootstrap.cli.generate_soul_with_hermes", side_effect=generate_with_status_assertion
+            ):
                 apply_soul_generation(plan, tui)
 
             self.assertIn(("status_stop", "Generating SOUL.md with Hermes AI backend..."), tui.events)
@@ -508,1238 +530,3 @@ class CliPlanTests(unittest.TestCase):
             "curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-progress-tail/${LATEST_HERMES_PROGRESS_TAIL_TAG}/install.sh | env HPT_INTERACTIVE=0 HERMES_HOME=/tmp/hermes bash",
             commands,
         )
-
-    def test_build_plan_can_use_global_runtime_python_with_user_profile_home(self):
-        options = InstallerOptions(
-            base_home=Path("/home/lutfi22/.hermes"),
-            profile="default",
-            yes=True,
-            dry_run=True,
-            hermes_bin="/usr/local/bin/hermes",
-            hermes_bin_source="path",
-            hermes_python=Path("/srv/shared/hermes/runtime/venv/bin/python"),
-            hermes_python_source="discovered",
-        )
-
-        plan = build_plan(options)
-        commands = [step.command for step in plan.steps if step.command]
-
-        self.assertIn(
-            "/srv/shared/hermes/runtime/venv/bin/python -m pip install --upgrade --no-cache-dir 'mnemosyne-memory[embeddings]' sqlite-vec",
-            commands,
-        )
-        self.assertIn(
-            "HERMES_HOME=/home/lutfi22/.hermes /srv/shared/hermes/runtime/venv/bin/python -m mnemosyne.install",
-            commands,
-        )
-        self.assertIn(
-            "/usr/local/bin/hermes memory status && /usr/local/bin/hermes mnemosyne stats && /usr/local/bin/hermes plugins list --plain --no-bundled",
-            commands,
-        )
-
-    def test_build_plan_normalizes_windows_python_path_for_git_bash_commands(self):
-        options = InstallerOptions(
-            base_home=Path("C:/Users/Nix/AppData/Local/hermes"),
-            profile="default",
-            yes=True,
-            dry_run=True,
-            hermes_python=Path(r"C:\Users\Nix\AppData\Local\hermes\hermes-agent\venv\Scripts\python"),
-            hermes_python_source="discovered",
-            mnemosyne_mode="hybrid",
-        )
-
-        plan = build_plan(options)
-        commands = [step.command for step in plan.steps if step.command]
-
-        self.assertIn(
-            "/c/Users/Nix/AppData/Local/hermes/hermes-agent/venv/Scripts/python -m pip install --upgrade --no-cache-dir 'mnemosyne-memory[embeddings]' sqlite-vec",
-            commands,
-        )
-        self.assertIn(
-            "HERMES_HOME=/c/Users/Nix/AppData/Local/hermes /c/Users/Nix/AppData/Local/hermes/hermes-agent/venv/Scripts/python -m mnemosyne.install",
-            commands,
-        )
-
-    def test_install_mnemosyne_uses_argument_vector_for_windows_python_path(self):
-        options = InstallerOptions(
-            base_home=Path("C:/Users/Nix/AppData/Local/hermes"),
-            profile="default",
-            yes=True,
-            dry_run=False,
-            hermes_python=Path(r"C:\Users\Nix\AppData\Local\hermes\hermes-agent\venv\Scripts\python"),
-            hermes_python_source="discovered",
-            mnemosyne_mode="hybrid",
-        )
-        plan = build_plan(options)
-
-        with (
-            patch("hermes_stack_bootstrap.cli.mnemosyne_packages_satisfied", return_value=False),
-            patch("hermes_stack_bootstrap.cli.mnemosyne_runtime_needs_sudo", return_value=False),
-            patch("hermes_stack_bootstrap.cli.run_command") as run_command,
-        ):
-            install_mnemosyne(plan)
-
-        pip_args = run_command.call_args_list[0].args[0]
-        install_args = run_command.call_args_list[1].args[0]
-        self.assertIsInstance(pip_args, list)
-        self.assertEqual(
-            pip_args,
-            [
-                r"C:\Users\Nix\AppData\Local\hermes\hermes-agent\venv\Scripts\python",
-                "-m",
-                "pip",
-                "install",
-                "--upgrade",
-                "--no-cache-dir",
-                "mnemosyne-memory[embeddings]",
-                "sqlite-vec",
-            ],
-        )
-        self.assertEqual(install_args[:3], [r"C:\Users\Nix\AppData\Local\hermes\hermes-agent\venv\Scripts\python", "-m", "mnemosyne.install"])
-        self.assertEqual(run_command.call_args_list[1].kwargs["env"]["HERMES_HOME"], "C:/Users/Nix/AppData/Local/hermes")
-
-    def test_install_mnemosyne_skips_pip_when_packages_are_already_satisfied(self):
-        options = InstallerOptions(
-            base_home=Path("/tmp/hermes"),
-            profile="default",
-            yes=True,
-            dry_run=False,
-            mnemosyne_mode="hybrid",
-        )
-        plan = build_plan(options)
-
-        with (
-            patch("hermes_stack_bootstrap.cli.mnemosyne_packages_satisfied", return_value=True),
-            patch("hermes_stack_bootstrap.cli.run_command") as run_command,
-        ):
-            install_mnemosyne(plan)
-
-        commands = [call.args[0] for call in run_command.call_args_list]
-        self.assertEqual(commands, [[str(plan.options.hermes_python or Path("/tmp/hermes/hermes-agent/venv/bin/python")), "-m", "mnemosyne.install"]])
-        self.assertEqual(run_command.call_args_list[0].kwargs["env"]["HERMES_HOME"], "/tmp/hermes")
-
-    def test_install_mnemosyne_uses_sudo_when_shared_runtime_is_not_writable(self):
-        options = InstallerOptions(
-            base_home=Path("/tmp/hermes"),
-            profile="default",
-            yes=False,
-            dry_run=False,
-            hermes_python=Path("/opt/hermes/venv/bin/python"),
-            mnemosyne_mode="hybrid",
-        )
-        plan = build_plan(options)
-
-        with (
-            patch("hermes_stack_bootstrap.cli.mnemosyne_packages_satisfied", return_value=False),
-            patch("hermes_stack_bootstrap.cli.mnemosyne_runtime_needs_sudo", return_value=True),
-            patch("hermes_stack_bootstrap.cli.run_command") as run_command,
-        ):
-            install_mnemosyne(plan)
-
-        self.assertEqual(run_command.call_args_list[0].args[0], ["sudo", "-v"])
-        self.assertEqual(
-            run_command.call_args_list[1].args[0],
-            ["sudo", "/opt/hermes/venv/bin/python", "-m", "pip", "install", "--upgrade", "--no-cache-dir", "mnemosyne-memory[embeddings]", "sqlite-vec"],
-        )
-
-    def test_install_mnemosyne_fails_actionably_when_sudo_needed_noninteractive(self):
-        options = InstallerOptions(
-            base_home=Path("/tmp/hermes"),
-            profile="default",
-            yes=True,
-            dry_run=False,
-            hermes_python=Path("/opt/hermes/venv/bin/python"),
-            mnemosyne_mode="hybrid",
-        )
-        plan = build_plan(options)
-
-        with (
-            patch("hermes_stack_bootstrap.cli.mnemosyne_packages_satisfied", return_value=False),
-            patch("hermes_stack_bootstrap.cli.mnemosyne_runtime_needs_sudo", return_value=True),
-        ):
-            with self.assertRaisesRegex(PermissionError, "sudo /opt/hermes/venv/bin/python -m pip install"):
-                install_mnemosyne(plan)
-
-    def test_mnemosyne_packages_satisfied_parses_pip_dry_run_report(self):
-        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
-        with (
-            patch("subprocess.run", return_value=completed),
-            patch("tempfile.NamedTemporaryFile") as named_tmp,
-            patch("pathlib.Path.read_text", return_value='{\"install\": []}'),
-        ):
-            named_tmp.return_value.__enter__.return_value.name = "/tmp/report.json"
-            self.assertTrue(mnemosyne_packages_satisfied(Path("/venv/bin/python"), ["mnemosyne-memory[embeddings]", "sqlite-vec"]))
-
-    def test_mnemosyne_runtime_needs_sudo_detects_non_writable_runtime_paths(self):
-        completed = subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout='["/opt/hermes/venv/lib/python/site-packages", "/opt/hermes/venv/bin"]',
-            stderr="",
-        )
-        with (
-            patch("subprocess.run", return_value=completed),
-            patch("os.access", return_value=False),
-        ):
-            self.assertTrue(mnemosyne_runtime_needs_sudo(Path("/opt/hermes/venv/bin/python")))
-
-    def test_build_plan_uses_mode_specific_mnemosyne_install_commands(self):
-        hybrid = InstallerOptions(
-            base_home=Path("/tmp/hermes"),
-            profile="default",
-            yes=True,
-            dry_run=True,
-            mnemosyne_mode="hybrid",
-        )
-        online = InstallerOptions(
-            base_home=Path("/tmp/hermes"),
-            profile="default",
-            yes=True,
-            dry_run=True,
-            mnemosyne_mode="full-online",
-        )
-
-        hybrid_commands = [step.command for step in build_plan(hybrid).steps if step.command]
-        online_commands = [step.command for step in build_plan(online).steps if step.command]
-
-        self.assertIn(
-            "/tmp/hermes/hermes-agent/venv/bin/python -m pip install --upgrade --no-cache-dir 'mnemosyne-memory[embeddings]' sqlite-vec",
-            hybrid_commands,
-        )
-        self.assertIn(
-            "/tmp/hermes/hermes-agent/venv/bin/python -m pip install --upgrade --no-cache-dir mnemosyne-memory sqlite-vec numpy",
-            online_commands,
-        )
-
-    def test_wizard_accepts_global_runtime_overrides_from_environment(self):
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/home/lutfi22/.hermes")):
-            options = wizard(
-                ["--yes", "--skip-mnemosyne"],
-                env={
-                    "HERMES_BIN": "/usr/local/bin/hermes",
-                    "HERMES_STACK_PYTHON": "/srv/shared/hermes/venv/bin/python",
-                },
-            )
-
-        self.assertEqual(options.base_home, Path("/home/lutfi22/.hermes"))
-        self.assertEqual(options.hermes_bin, "/usr/local/bin/hermes")
-        self.assertEqual(options.hermes_python, Path("/srv/shared/hermes/venv/bin/python"))
-        self.assertEqual(options.hermes_bin_source, "explicit")
-        self.assertEqual(options.hermes_python_source, "explicit")
-
-    def test_validate_runtime_options_requires_python_when_mnemosyne_needed(self):
-        options = InstallerOptions(
-            base_home=Path("/tmp/hermes"),
-            profile="default",
-            yes=True,
-            dry_run=True,
-            hermes_python=None,
-            skip_mnemosyne=False,
-        )
-
-        with self.assertRaisesRegex(ValueError, "Python environment that runs Hermes"):
-            validate_runtime_options(options)
-
-    def test_validate_runtime_options_allows_missing_python_when_mnemosyne_skipped(self):
-        options = InstallerOptions(
-            base_home=Path("/tmp/hermes"),
-            profile="default",
-            yes=True,
-            dry_run=True,
-            hermes_python=None,
-            skip_mnemosyne=True,
-        )
-
-        validate_runtime_options(options)
-
-    def test_wizard_prompts_to_skip_mnemosyne_when_runtime_python_missing(self):
-        missing_runtime = HermesRuntime(
-            hermes_bin="/usr/local/bin/hermes",
-            hermes_bin_source="PATH",
-            hermes_python=None,
-            hermes_python_source="not found",
-        )
-        tui = FakeTui([None, None, "Skip Mnemosyne", None, False, "", "", False, False, False, False])
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/home/lutfi22/.hermes")),
-            patch("hermes_stack_bootstrap.cli.discover_hermes_runtime", return_value=missing_runtime),
-            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
-        ):
-            options = wizard([], ui=tui)
-
-        self.assertTrue(options.skip_mnemosyne)
-        self.assertIsNone(options.hermes_python)
-        self.assertEqual(options.hermes_python_source, "not found")
-
-    def test_wizard_accepts_manual_runtime_python_when_discovery_misses(self):
-        missing_runtime = HermesRuntime(
-            hermes_bin="/usr/local/bin/hermes",
-            hermes_bin_source="PATH",
-            hermes_python=None,
-            hermes_python_source="not found",
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            runtime_python = Path(tmp) / "venv" / "bin" / "python"
-            runtime_python.parent.mkdir(parents=True)
-            runtime_python.write_text("#!/bin/sh\n", encoding="utf-8")
-            runtime_python.chmod(0o755)
-            tui = FakeTui([None, None, "Paste runtime Python path", str(runtime_python), None, False, "hybrid", "", "", False, False, False, False])
-            with (
-                patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/home/lutfi22/.hermes")),
-                patch("hermes_stack_bootstrap.cli.discover_hermes_runtime", return_value=missing_runtime),
-                patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
-            ):
-                options = wizard([], ui=tui)
-
-        self.assertFalse(options.skip_mnemosyne)
-        self.assertEqual(options.hermes_python, runtime_python)
-        self.assertEqual(options.hermes_python_source, "manual prompt")
-
-    def test_wizard_accepts_mnemosyne_and_lcm_model_options(self):
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
-            options = wizard(
-                [
-                    "--yes",
-                    "--mnemosyne-mode",
-                    "hybrid",
-                    "--mnemosyne-llm-provider",
-                    "openrouter",
-                    "--mnemosyne-llm-model",
-                    "anthropic/claude-sonnet-4",
-                    "--lcm-summary-model",
-                    "openrouter/google/gemini-2.5-flash",
-                    "--lcm-expansion-model",
-                    "openrouter/anthropic/claude-sonnet-4",
-                ]
-            )
-
-        self.assertEqual(options.mnemosyne_mode, "hybrid")
-        self.assertEqual(options.mnemosyne_host_llm_provider, "openrouter")
-        self.assertEqual(options.mnemosyne_host_llm_model, "anthropic/claude-sonnet-4")
-        self.assertEqual(options.lcm_summary_model, "openrouter/google/gemini-2.5-flash")
-        self.assertEqual(options.lcm_expansion_model, "openrouter/anthropic/claude-sonnet-4")
-
-    def test_wizard_accepts_noninteractive_hashmicro_provider_setup(self):
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch(
-                "hermes_stack_bootstrap.cli.fetch_openai_compatible_model_metadata",
-                return_value=(
-                    ["gpt-5.5", "gpt-5.5-medium", "gpt-5.5-xhigh", "gpt-5.4-mini"],
-                    {"gpt-5.5": 272000, "gpt-5.5-medium": 400000, "gpt-5.5-xhigh": 400000, "gpt-5.4-mini": 409600},
-                ),
-            ),
-        ):
-            options = wizard(
-                [
-                    "--yes",
-                    "--setup-hashmicro-provider",
-                    "--main-model",
-                    "gpt-5.5",
-                    "--main-context-length",
-                    "400000",
-                    "--delegation-model",
-                    "gpt-5.5-medium",
-                    "--delegation-context-length",
-                    "400000",
-                    "--aux-all-model",
-                    "gpt-5.4-mini",
-                    "--aux-all-context-length",
-                    "409600",
-                    "--aux-model",
-                    "compression=gpt-5.5-medium",
-                    "--aux-context-length",
-                    "compression=400000",
-                    "--skip-mnemosyne",
-                ],
-                env={"XAI_HASHMICRO_API_KEY": "secret-from-env"},
-            )
-
-        self.assertTrue(options.setup_hashmicro_provider)
-        self.assertEqual(options.hashmicro_api_key, "secret-from-env")
-        self.assertEqual(options.hashmicro_main_model, "gpt-5.5")
-        self.assertEqual(options.hashmicro_main_context_length, 400000)
-        self.assertEqual(options.hashmicro_delegation_model, "gpt-5.5-medium")
-        self.assertEqual(options.hashmicro_delegation_context_length, 400000)
-        self.assertEqual(options.hashmicro_auxiliary_models["vision"], "gpt-5.4-mini")
-        self.assertEqual(options.hashmicro_auxiliary_context_lengths["vision"], 409600)
-        self.assertEqual(options.hashmicro_auxiliary_models["compression"], "gpt-5.5-medium")
-        self.assertEqual(options.hashmicro_auxiliary_context_lengths["compression"], 400000)
-        self.assertEqual(options.hashmicro_reasoning_effort, "xhigh")
-
-    def test_wizard_uses_272k_for_hashmicro_gpt55_codex_even_if_endpoint_reports_400k(self):
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch(
-                "hermes_stack_bootstrap.cli.fetch_openai_compatible_model_metadata",
-                return_value=(
-                    ["codex/gpt-5.5", "codex/gpt-5.5-xhigh"],
-                    {"codex/gpt-5.5": 400000, "codex/gpt-5.5-xhigh": 400000},
-                ),
-            ),
-        ):
-            options = wizard(
-                [
-                    "--yes",
-                    "--setup-hashmicro-provider",
-                    "--main-model",
-                    "codex/gpt-5.5",
-                    "--delegation-model",
-                    "codex/gpt-5.5",
-                    "--skip-mnemosyne",
-                ],
-                env={"XAI_HASHMICRO_API_KEY": "secret-from-env"},
-            )
-
-        self.assertEqual(options.hashmicro_main_context_length, 272000)
-        self.assertEqual(options.hashmicro_delegation_context_length, 272000)
-
-    def test_merge_config_and_env_applies_hashmicro_provider_without_leaking_secret_to_config(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            options = InstallerOptions(
-                base_home=Path(tmp),
-                profile="default",
-                yes=True,
-                dry_run=False,
-                setup_hashmicro_provider=True,
-                hashmicro_api_key="super-secret",
-                hashmicro_main_model="gpt-5.5",
-                hashmicro_main_context_length=400000,
-                hashmicro_delegation_model="gpt-5.5-medium",
-                hashmicro_delegation_context_length=400000,
-                hashmicro_auxiliary_models={"compression": "gpt-5.4-mini"},
-                hashmicro_auxiliary_context_lengths={"compression": 409600},
-                hashmicro_reasoning_effort="xhigh",
-                hashmicro_available_models=("gpt-5.5", "gpt-5.5-medium", "gpt-5.5-xhigh", "gpt-5.4-mini"),
-            )
-            plan = build_plan(options)
-
-            merge_config_and_env(plan)
-
-            config_text = (Path(tmp) / "config.yaml").read_text(encoding="utf-8")
-            config = yaml.safe_load(config_text)
-            env_text = (Path(tmp) / ".env").read_text(encoding="utf-8")
-
-        provider = next(item for item in config["custom_providers"] if item["name"] == "xai-hashmicro")
-        self.assertEqual(provider["models"]["gpt-5.5-xhigh"]["context_length"], 400000)
-        self.assertEqual(provider["models"]["gpt-5.4-mini"]["context_length"], 409600)
-        self.assertEqual(config["model"]["provider"], "custom:xai-hashmicro")
-        self.assertEqual(config["model"]["default"], "gpt-5.5-xhigh")
-        self.assertNotIn("context_length", config["model"])
-        self.assertEqual(config["delegation"]["provider"], "custom:xai-hashmicro")
-        self.assertEqual(config["delegation"]["model"], "gpt-5.5-xhigh")
-        self.assertEqual(config["delegation"]["reasoning_effort"], "xhigh")
-        self.assertEqual(config["agent"]["reasoning_effort"], "xhigh")
-        self.assertEqual(config["auxiliary"]["compression"]["provider"], "custom:xai-hashmicro")
-        self.assertEqual(config["auxiliary"]["compression"]["model"], "gpt-5.4-mini")
-        self.assertNotIn("context_length", config["auxiliary"]["compression"])
-        self.assertIn("XAI_HASHMICRO_API_KEY=super-secret", env_text)
-        self.assertNotIn("super-secret", config_text)
-
-    def test_merge_config_and_env_persists_hmx_gitlab_token_when_provided(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            options = InstallerOptions(
-                base_home=Path(tmp),
-                profile="default",
-                yes=True,
-                dry_run=False,
-                install_hmx_knowledge=True,
-                hmx_gitlab_token="glpat-secret",
-            )
-            plan = build_plan(options)
-
-            merge_config_and_env(plan)
-
-            env_text = (Path(tmp) / ".env").read_text(encoding="utf-8")
-
-        self.assertIn("GITLAB_TOKEN=glpat-secret", env_text)
-
-    def test_merge_config_and_env_does_not_persist_gitlab_token_when_hmx_not_selected(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            options = InstallerOptions(
-                base_home=Path(tmp),
-                profile="default",
-                yes=True,
-                dry_run=False,
-                install_hmx_knowledge=False,
-                hmx_gitlab_token="ambient-token",
-            )
-            plan = build_plan(options)
-
-            merge_config_and_env(plan)
-
-            env_text = (Path(tmp) / ".env").read_text(encoding="utf-8")
-
-        self.assertNotIn("GITLAB_TOKEN", env_text)
-
-    def test_dry_run_redacts_hmx_gitlab_token_preview(self):
-        with tempfile.TemporaryDirectory() as tmp, patch("sys.stdout", new_callable=io.StringIO) as stdout:
-            options = InstallerOptions(
-                base_home=Path(tmp),
-                profile="default",
-                yes=True,
-                dry_run=True,
-                install_hmx_knowledge=True,
-                hmx_gitlab_token="glpat-secret",
-            )
-            plan = build_plan(options)
-
-            merge_config_and_env(plan)
-
-        output = stdout.getvalue()
-        self.assertIn('GITLAB_TOKEN="<redacted>"', output)
-        self.assertNotIn("glpat-secret", output)
-
-    def test_interactive_wizard_guides_hashmicro_provider_and_model_routing(self):
-        tui = FakeTui([
-            None,  # install mode
-            None,  # base home
-            None,  # profiles
-            True,  # setup recommended HashMicro provider
-            "hm-secret",  # HashMicro API key
-            "gpt-5.5",  # main model
-            None,  # reasoning effort = xhigh default
-            None,  # main context length = live default for gpt-5.5
-            "gpt-5.5-medium",  # delegation model
-            None,  # delegation context length = live default for gpt-5.5-medium
-            "gpt-5.4-mini",  # auxiliary default model
-            None,  # auxiliary default context length
-            False,  # do not customize per auxiliary task
-            "hybrid",  # Mnemosyne mode
-            None,  # Mnemosyne provider = default
-            "gpt-5.5",  # LCM summary model
-            "gpt-5.5-medium",  # LCM expansion model
-            False,  # skip Superpowers
-            False,  # skip HMX knowledge
-            False,  # skip Impeccable
-            False,  # skip Ponytail
-        ])
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
-            patch(
-                "hermes_stack_bootstrap.cli.fetch_openai_compatible_model_metadata",
-                return_value=(
-                    ["gpt-5.5", "gpt-5.5-medium", "gpt-5.5-xhigh", "gpt-5.4-mini"],
-                    {"gpt-5.5": 272000, "gpt-5.5-medium": 400000, "gpt-5.5-xhigh": 400000, "gpt-5.4-mini": 409600},
-                ),
-            ),
-        ):
-            options = wizard([], ui=tui, env={})
-
-        self.assertTrue(options.setup_hashmicro_provider)
-        self.assertEqual(options.hashmicro_api_key, "hm-secret")
-        self.assertEqual(options.hashmicro_main_model, "gpt-5.5")
-        self.assertEqual(options.hashmicro_main_context_length, 400000)
-        self.assertEqual(options.hashmicro_delegation_model, "gpt-5.5-medium")
-        self.assertEqual(options.hashmicro_delegation_context_length, 400000)
-        self.assertEqual(options.hashmicro_reasoning_effort, "xhigh")
-        self.assertEqual(set(options.hashmicro_auxiliary_models), set(AUXILIARY_TASKS))
-        self.assertEqual(options.hashmicro_auxiliary_models["compression"], "gpt-5.4-mini")
-        self.assertEqual(options.hashmicro_auxiliary_context_lengths["compression"], 409600)
-        prompts = [event[1] for event in tui.events if event[0] in {"select", "confirm", "password"}]
-        self.assertLess(prompts.index("Configure recommended xAI HashMicro provider?"), prompts.index("Mnemosyne mode"))
-        self.assertIn("HashMicro main model", prompts)
-        self.assertIn("HashMicro reasoning effort", prompts)
-        self.assertIn("HashMicro delegation model", prompts)
-        self.assertIn("HashMicro default auxiliary model", prompts)
-        text_prompts = [event[1] for event in tui.events if event[0] == "text"]
-        self.assertIn("HashMicro main context length", text_prompts)
-        self.assertIn("HashMicro delegation context length", text_prompts)
-        self.assertIn("HashMicro default auxiliary context length", text_prompts)
-        step_titles = [event[1] for event in tui.events if event[0] == "step"]
-        self.assertEqual(
-            step_titles[:6],
-            [
-                "1. Install scope",
-                "2. Hermes target/runtime",
-                "3. Recommended provider setup",
-                "4. Model routing",
-                "5. Stack components",
-                "6. Skill packs and credentials",
-            ],
-        )
-
-    def test_interactive_wizard_captures_hmx_gitlab_token_when_installing_hmx(self):
-        tui = FakeTui([
-            "Plugin & skill only",
-            None,  # base home
-            None,  # profiles
-            False,  # skip Superpowers
-            True,  # install HMX knowledge
-            "glpat-secret",  # GitLab token
-            False,  # skip Impeccable
-            False,  # skip Ponytail
-        ])
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
-        ):
-            options = wizard([], ui=tui, env={})
-
-        self.assertTrue(options.install_hmx_knowledge)
-        self.assertEqual(options.hmx_gitlab_token, "glpat-secret")
-        self.assertIn(("password", "HMX GitLab token (hidden; empty to use SSH/credential helper only)"), tui.events)
-
-    def test_wizard_picks_mnemosyne_and_lcm_models_from_detected_hermes_providers(self):
-        providers = [
-            ProviderChoice("openrouter", "OpenRouter — 2 models", ("anthropic/claude-sonnet-4", "google/gemini-3-flash")),
-            ProviderChoice("custom:lokal", "Lokal — 1 model", ("gpt-5.4-mini",)),
-        ]
-        tui = FakeTui([
-            None,  # install mode
-            None,  # base home
-            None,  # profiles
-            False,  # skip HashMicro provider setup
-            "hybrid",
-            "OpenRouter — 2 models",
-            "anthropic/claude-sonnet-4",
-            "google/gemini-3-flash",
-            None,  # expansion same as summary
-            False,  # skip Superpowers
-            False,  # skip HMX knowledge
-            False,  # skip Impeccable
-            False,  # skip Ponytail
-        ])
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=providers),
-        ):
-            options = wizard([], ui=tui)
-
-        self.assertEqual(options.mnemosyne_host_llm_provider, "openrouter")
-        self.assertEqual(options.mnemosyne_host_llm_model, "anthropic/claude-sonnet-4")
-        self.assertEqual(options.lcm_summary_model, "google/gemini-3-flash")
-        self.assertEqual(options.lcm_expansion_model, "google/gemini-3-flash")
-        select_prompts = [event[1] for event in tui.events if event[0] == "select"]
-        self.assertIn("Mnemosyne host LLM provider", select_prompts)
-        self.assertIn("Mnemosyne host LLM model", select_prompts)
-        self.assertIn("LCM summary model", select_prompts)
-
-    def test_wizard_accepts_full_online_embedding_options_from_environment(self):
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
-            options = wizard(
-                [
-                    "--yes",
-                    "--mnemosyne-mode",
-                    "full-online",
-                ],
-                env={
-                    "MNEMOSYNE_EMBEDDING_API_URL": "https://embeddings.example/v1",
-                    "MNEMOSYNE_EMBEDDING_API_KEY": "secret-from-env",
-                    "MNEMOSYNE_EMBEDDING_MODEL": "text-embedding-3-small",
-                    "MNEMOSYNE_EMBEDDING_DIM": "1536",
-                },
-            )
-
-        self.assertEqual(options.mnemosyne_mode, "full-online")
-        self.assertEqual(options.mnemosyne_embedding_api_url, "https://embeddings.example/v1")
-        self.assertEqual(options.mnemosyne_embedding_api_key, "secret-from-env")
-        self.assertEqual(options.mnemosyne_embedding_model, "text-embedding-3-small")
-        self.assertEqual(options.mnemosyne_embedding_dim, "1536")
-
-    def test_wizard_prompts_for_full_online_embedding_api_key_without_echo(self):
-        tui = FakeTui([
-            None,  # install mode
-            None,
-            None,
-            False,  # skip HashMicro provider setup
-            "full-online",
-            "https://embeddings.example/v1",
-            "secret-from-prompt",
-            "text-embedding-3-small",
-            "1536",
-            "",  # lcm summary
-            "",  # lcm expansion
-            False,  # skip Superpowers
-            False,  # skip HMX knowledge
-            False,  # skip Impeccable
-            False,  # skip Ponytail
-        ])
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
-        ):
-            options = wizard([], env={}, ui=tui)
-
-        self.assertIn(("password", "Mnemosyne embedding API key (hidden; empty if endpoint needs no key)"), tui.events)
-        self.assertEqual(options.mnemosyne_embedding_api_url, "https://embeddings.example/v1")
-        self.assertEqual(options.mnemosyne_embedding_api_key, "secret-from-prompt")
-        self.assertEqual(options.mnemosyne_embedding_model, "text-embedding-3-small")
-        self.assertEqual(options.mnemosyne_embedding_dim, "1536")
-
-    def test_wizard_rejects_partial_full_online_embedding_config(self):
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
-            with self.assertRaisesRegex(ValueError, "requires --mnemosyne-embedding-api-url"):
-                wizard(
-                    [
-                        "--yes",
-                        "--mnemosyne-mode",
-                        "full-online",
-                    ],
-                    env={"MNEMOSYNE_EMBEDDING_API_KEY": "secret-without-url"},
-                )
-
-    def test_print_plan_shows_runtime_discovery_paths(self):
-        options = InstallerOptions(
-            base_home=Path("/home/lutfi22/.hermes"),
-            profile="default",
-            yes=True,
-            dry_run=True,
-            hermes_bin="/usr/local/bin/hermes",
-            hermes_bin_source="path",
-            hermes_python=Path("/srv/shared/hermes/venv/bin/python"),
-            hermes_python_source="bounded filesystem scan",
-            skip_lcm=True,
-            skip_mnemosyne=True,
-            skip_progress_tail=True,
-        )
-        plan = build_plan(options)
-        buffer = io.StringIO()
-
-        with patch("sys.stdout", buffer):
-            print_plan(plan)
-
-        output = buffer.getvalue()
-        self.assertIn("Hermes profile base", output)
-        self.assertIn("/home/lutfi22/.hermes", output)
-        self.assertIn("Hermes CLI", output)
-        self.assertIn("/usr/local/bin/hermes", output)
-        self.assertIn("Hermes Python", output)
-        self.assertIn("/srv/shared/hermes/venv/bin/python", output)
-        self.assertIn("bounded filesystem scan", output)
-
-    def test_plan_output_never_prints_embedding_api_key_value(self):
-        options = InstallerOptions(
-            base_home=Path("/tmp/hermes"),
-            profile="default",
-            yes=True,
-            dry_run=True,
-            mnemosyne_mode="full-online",
-            mnemosyne_embedding_api_key="do-not-print-this-secret",
-        )
-        plan = build_plan(options)
-        buffer = io.StringIO()
-
-        with patch("sys.stdout", buffer):
-            print_plan(plan)
-
-        output = buffer.getvalue()
-        self.assertNotIn("do-not-print-this-secret", output)
-
-    def test_build_plan_targets_named_profile_for_progress_tail(self):
-        options = InstallerOptions(
-            base_home=Path("/tmp/hermes"),
-            profile="work",
-            yes=True,
-            dry_run=True,
-            summary_model="",
-        )
-
-        plan = build_plan(options)
-        commands = [step.command for step in plan.steps if step.command]
-
-        self.assertIn(
-            "git clone https://github.com/stephenschoettler/hermes-lcm /tmp/hermes/profiles/work/plugins/hermes-lcm",
-            commands,
-        )
-        self.assertIn(
-            "curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-progress-tail/${LATEST_HERMES_PROGRESS_TAIL_TAG}/install.sh | env HPT_INTERACTIVE=0 HERMES_HOME=/tmp/hermes HPT_PROFILES=work bash",
-            commands,
-        )
-        self.assertIn(
-            "hermes -p work memory status && hermes -p work mnemosyne stats && hermes -p work plugins list --plain --no-bundled",
-            commands,
-        )
-
-    def test_build_plan_can_include_optional_skill_repositories(self):
-        options = InstallerOptions(
-            base_home=Path("/tmp/hermes"),
-            profile="default",
-            yes=True,
-            dry_run=True,
-            install_superpowers=True,
-            install_hmx_knowledge=True,
-            install_impeccable=True,
-            install_ponytail=True,
-        )
-
-        plan = build_plan(options)
-        commands = [step.command for step in plan.steps if step.command]
-
-        self.assertIn(
-            "stage skills from https://github.com/obra/superpowers into /tmp/hermes/skills/vendor/obra-superpowers",
-            commands,
-        )
-        self.assertIn(
-            "stage skills from git@gitlab.com:hashmicro1/hmx/hmx-knowledge.git into /tmp/hermes/skills/vendor/hmx-knowledge",
-            commands,
-        )
-        self.assertIn(
-            "stage skills from https://github.com/pbakaus/impeccable into /tmp/hermes/skills/vendor/impeccable",
-            commands,
-        )
-        self.assertIn(
-            "stage skills from https://github.com/DietrichGebert/ponytail into /tmp/hermes/skills/vendor/ponytail",
-            commands,
-        )
-        self.assertNotIn(
-            "git clone --depth=1 https://github.com/obra/superpowers /tmp/hermes/skills/vendor/obra-superpowers",
-            commands,
-        )
-        self.assertNotIn(
-            "git clone --depth=1 git@gitlab.com:hashmicro1/hmx/hmx-knowledge.git /tmp/hermes/skills/vendor/hmx-knowledge",
-            commands,
-        )
-        self.assertNotIn(
-            "git clone --depth=1 https://github.com/pbakaus/impeccable /tmp/hermes/skills/vendor/impeccable",
-            commands,
-        )
-        self.assertNotIn(
-            "git clone --depth=1 https://github.com/DietrichGebert/ponytail /tmp/hermes/skills/vendor/ponytail",
-            commands,
-        )
-
-    def test_stage_skill_pack_replaces_incorrect_repo_root_install(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "source"
-            source_skills = source / "skills"
-            (source_skills / "ponytail").mkdir(parents=True)
-            (source_skills / "ponytail-review").mkdir(parents=True)
-            (source_skills / "ponytail" / "SKILL.md").write_text("ponytail", encoding="utf-8")
-            (source_skills / "ponytail-review" / "SKILL.md").write_text("review", encoding="utf-8")
-            (source / "package.json").write_text("{}", encoding="utf-8")
-            (source / "commands").mkdir()
-
-            dest = Path(tmp) / "hermes" / "skills" / "vendor" / "ponytail"
-            (dest / "skills" / "wrong").mkdir(parents=True)
-            (dest / "skills" / "wrong" / "SKILL.md").write_text("wrong", encoding="utf-8")
-            (dest / "package.json").write_text("{}", encoding="utf-8")
-            (dest / "commands").mkdir()
-            spec = SkillPackSpec("ponytail", "https://example.invalid/ponytail", source_subdir="skills")
-
-            self.assertTrue(is_repo_root_skill_install(dest))
-
-            stage_skill_pack(source, dest, spec)
-
-            backups = list((dest.parent.parent.parent / "backups").glob("ponytail-repo-root-backup-*"))
-            self.assertEqual(len(backups), 1)
-            self.assertTrue((backups[0] / "package.json").exists())
-            self.assertTrue((backups[0] / "commands").exists())
-            self.assertFalse((dest / "package.json").exists())
-            self.assertFalse((dest / "commands").exists())
-            self.assertFalse((dest / "skills").exists())
-            self.assertEqual((dest / "ponytail" / "SKILL.md").read_text(encoding="utf-8"), "ponytail")
-            self.assertEqual((dest / "ponytail-review" / "SKILL.md").read_text(encoding="utf-8"), "review")
-
-    def test_stage_skill_pack_preserves_non_upstream_custom_skills(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "source"
-            (source / "skills" / "ponytail").mkdir(parents=True)
-            (source / "skills" / "ponytail" / "SKILL.md").write_text("fresh", encoding="utf-8")
-
-            dest = Path(tmp) / "hermes" / "skills" / "vendor" / "ponytail"
-            (dest / "ponytail").mkdir(parents=True)
-            (dest / "ponytail" / "SKILL.md").write_text("old", encoding="utf-8")
-            (dest / "my-custom-skill").mkdir()
-            (dest / "my-custom-skill" / "SKILL.md").write_text("custom", encoding="utf-8")
-            spec = SkillPackSpec("ponytail", "https://example.invalid/ponytail", source_subdir="skills")
-
-            stage_skill_pack(source, dest, spec)
-
-            self.assertEqual((dest / "ponytail" / "SKILL.md").read_text(encoding="utf-8"), "fresh")
-            self.assertEqual((dest / "my-custom-skill" / "SKILL.md").read_text(encoding="utf-8"), "custom")
-            self.assertFalse((dest.parent.parent.parent / "backups").exists())
-
-    def test_stage_skill_pack_prefixes_superpowers_skill_names(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "source"
-            skill_dir = source / "skills" / "brainstorming"
-            skill_dir.mkdir(parents=True)
-            (skill_dir / "SKILL.md").write_text(
-                "---\n"
-                "name: brainstorming\n"
-                "description: Think first\n"
-                "---\n\n"
-                "Use test-driven-development when coding.\n"
-                "Use superpowers:test-driven-development if namespace form is needed.\n"
-                "See ../test-driven-development/testing-anti-patterns.md.\n",
-                encoding="utf-8",
-            )
-            (skill_dir / "scripts").mkdir()
-            (skill_dir / "references").mkdir()
-            (skill_dir / "visual-companion.md").write_text("Use test-driven-development here too", encoding="utf-8")
-            (skill_dir / "scripts" / "start-server.sh").write_text("#!/usr/bin/env bash\necho ok\n", encoding="utf-8")
-            (skill_dir / "references" / "guide.md").write_text("Ask for test-driven-development", encoding="utf-8")
-            dest = Path(tmp) / "hermes" / "skills" / "vendor" / "obra-superpowers"
-            spec = SkillPackSpec(
-                "obra-superpowers",
-                "https://example.invalid/superpowers",
-                source_subdir="skills",
-                skill_name_prefix="superpowers-",
-                body_token_prefixes=("test-driven-development",),
-            )
-
-            stage_skill_pack(source, dest, spec)
-
-            staged = dest / "superpowers-brainstorming"
-            self.assertTrue((staged / "SKILL.md").exists())
-            self.assertTrue((staged / "visual-companion.md").exists())
-            self.assertTrue((staged / "scripts" / "start-server.sh").exists())
-            self.assertTrue((staged / "references" / "guide.md").exists())
-            content = (staged / "SKILL.md").read_text(encoding="utf-8")
-            self.assertIn("name: superpowers-brainstorming", content)
-            self.assertIn("superpowers-test-driven-development", content)
-            self.assertIn("superpowers-test-driven-development if namespace form is needed", content)
-            self.assertNotIn("superpowers:superpowers-", content)
-            self.assertIn("../superpowers-test-driven-development/testing-anti-patterns.md", content)
-            companion = (staged / "visual-companion.md").read_text(encoding="utf-8")
-            reference = (staged / "references" / "guide.md").read_text(encoding="utf-8")
-            script = (staged / "scripts" / "start-server.sh").read_text(encoding="utf-8")
-            self.assertIn("superpowers-test-driven-development", companion)
-            self.assertIn("superpowers-test-driven-development", reference)
-            self.assertNotIn("superpowers-", script)
-            self.assertFalse((dest / "package.json").exists())
-
-    def test_stage_skill_pack_uses_configured_impeccable_skill_source(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "source"
-            (source / "plugin" / "skills" / "impeccable" / "scripts").mkdir(parents=True)
-            (source / "plugin" / "skills" / "impeccable" / "reference").mkdir(parents=True)
-            (source / "plugin" / "skills" / "impeccable" / "templates").mkdir(parents=True)
-            (source / "plugin" / "skills" / "impeccable" / "SKILL.md").write_text(
-                "---\nname: impeccable\ndescription: Design skill\n---\n\nRun scripts/context.mjs.\n",
-                encoding="utf-8",
-            )
-            (source / "plugin" / "skills" / "impeccable" / "scripts" / "context.mjs").write_text("ok", encoding="utf-8")
-            (source / "plugin" / "skills" / "impeccable" / "reference" / "audit.md").write_text("audit", encoding="utf-8")
-            (source / "plugin" / "skills" / "impeccable" / "templates" / "design.json").write_text("{}", encoding="utf-8")
-            (source / ".claude" / "skills" / "impeccable").mkdir(parents=True)
-            (source / ".claude" / "skills" / "impeccable" / "SKILL.md").write_text("wrong", encoding="utf-8")
-            dest = Path(tmp) / "hermes" / "skills" / "vendor" / "impeccable"
-            spec = SkillPackSpec("impeccable", "https://example.invalid/impeccable", source_subdir="plugin/skills")
-
-            stage_skill_pack(source, dest, spec)
-
-            self.assertTrue((dest / "impeccable" / "SKILL.md").exists())
-            self.assertTrue((dest / "impeccable" / "scripts" / "context.mjs").exists())
-            self.assertTrue((dest / "impeccable" / "reference" / "audit.md").exists())
-            self.assertTrue((dest / "impeccable" / "templates" / "design.json").exists())
-            self.assertFalse((dest / ".claude").exists())
-            self.assertFalse((dest / "package.json").exists())
-
-    def test_stage_skill_pack_discovers_private_repo_skills_when_no_source_subdir_is_configured(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            source = Path(tmp) / "source"
-            source.mkdir()
-            (source / "README.md").write_text("not a skill", encoding="utf-8")
-            (source / "skills" / "hmx-one").mkdir(parents=True)
-            (source / "skills" / "hmx-one" / "SKILL.md").write_text(
-                "---\nname: hmx-one\ndescription: HMX\n---\n",
-                encoding="utf-8",
-            )
-            dest = Path(tmp) / "hermes" / "skills" / "vendor" / "hmx-knowledge"
-            spec = SkillPackSpec("hmx-knowledge", "git@example.invalid:hmx.git")
-
-            stage_skill_pack(source, dest, spec)
-
-            self.assertTrue((dest / "hmx-one" / "SKILL.md").exists())
-            self.assertFalse((dest / "README.md").exists())
-
-    def test_install_optional_skills_uses_skill_pack_stagers(self):
-        options = InstallerOptions(
-            base_home=Path("/tmp/hermes"),
-            profile="default",
-            yes=True,
-            dry_run=True,
-            install_superpowers=True,
-            install_hmx_knowledge=True,
-            install_impeccable=True,
-            install_ponytail=True,
-            skip_lcm=True,
-            skip_mnemosyne=True,
-            skip_progress_tail=True,
-            skip_config_env=True,
-            skip_verify=True,
-        )
-        plan = build_plan(options)
-
-        with patch("hermes_stack_bootstrap.cli.install_skill_pack") as install_pack:
-            install_optional_skills(plan)
-
-        calls = [(call.args[0].name, call.args[1]) for call in install_pack.call_args_list]
-        self.assertEqual(
-            calls,
-            [
-                ("obra-superpowers", Path("/tmp/hermes/skills/vendor/obra-superpowers")),
-                ("hmx-knowledge", Path("/tmp/hermes/skills/vendor/hmx-knowledge")),
-                ("impeccable", Path("/tmp/hermes/skills/vendor/impeccable")),
-                ("ponytail", Path("/tmp/hermes/skills/vendor/ponytail")),
-            ],
-        )
-        hmx_spec = install_pack.call_args_list[1].args[0]
-        self.assertEqual(hmx_spec.source_subdir, "skills")
-
-    def test_install_hmx_skill_pack_retries_https_with_gitlab_token_without_leaking_token(self):
-        spec = SkillPackSpec(
-            "hmx-knowledge",
-            "git@gitlab.com:hashmicro1/hmx/hmx-knowledge.git",
-            source_subdir="skills",
-        )
-        dest = Path("/tmp/hermes/skills/vendor/hmx-knowledge")
-        calls = []
-
-        def fake_run(command, *, dry_run, env=None):
-            calls.append((command, env))
-            if len(calls) == 1:
-                raise subprocess.CalledProcessError(128, command)
-
-        with (
-            patch("hermes_stack_bootstrap.cli.run_command", side_effect=fake_run),
-            patch("hermes_stack_bootstrap.cli.stage_skill_pack") as stage,
-        ):
-            install_skill_pack(spec, dest, dry_run=False, gitlab_token="glpat-secret")
-
-        self.assertEqual(calls[0][0][0:3], ["git", "clone", "--depth=1"])
-        retry_command, retry_env = calls[1]
-        self.assertEqual(retry_command[0:3], ["git", "clone", "--depth=1"])
-        self.assertEqual(retry_command[3], "https://gitlab.com/hashmicro1/hmx/hmx-knowledge.git")
-        rendered = " ".join(str(part) for part in retry_command)
-        self.assertNotIn("glpat-secret", rendered)
-        self.assertIn("GIT_ASKPASS", retry_env)
-        self.assertIn("GIT_TERMINAL_PROMPT", retry_env)
-        askpass_path = Path(retry_env["GIT_ASKPASS"])
-        self.assertFalse(askpass_path.exists())
-        stage.assert_called_once()
-
-    def test_install_optional_skills_passes_hmx_gitlab_token_to_stager(self):
-        options = InstallerOptions(
-            base_home=Path("/tmp/hermes"),
-            profile="default",
-            yes=True,
-            dry_run=False,
-            install_hmx_knowledge=True,
-            skip_lcm=True,
-            skip_mnemosyne=True,
-            skip_progress_tail=True,
-            hmx_gitlab_token="glpat-secret",
-        )
-        plan = build_plan(options)
-
-        with patch("hermes_stack_bootstrap.cli.install_skill_pack") as install_pack:
-            install_optional_skills(plan)
-
-        self.assertEqual(install_pack.call_args.kwargs["gitlab_token"], "glpat-secret")
-
-    def test_full_online_env_merge_removes_stale_local_embedding_defaults_when_switching_modes(self):
-
-        tui = FakeTui([
-            None,  # install mode
-            None,
-            None,
-            False,  # skip HashMicro provider setup
-            "hybrid",
-            None,  # no lcm summary override
-            None,  # no lcm expansion override
-            False,  # skip Superpowers
-            False,  # skip HMX knowledge
-            False,  # skip Impeccable
-            False,  # skip recommended Ponytail
-        ])
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
-        ):
-            options = wizard([], ui=tui)
-
-        self.assertFalse(options.install_superpowers)
-        self.assertFalse(options.install_hmx_knowledge)
-        self.assertFalse(options.install_impeccable)
-        self.assertFalse(options.install_ponytail)
-        self.assertIn(("confirm", "Install Obra Superpowers skill pack?", False), tui.events)
-        self.assertIn(("confirm", "Install HMX knowledge skill pack?", False), tui.events)
-        self.assertIn(("confirm", "Install Impeccable design skill?", False), tui.events)
-        self.assertIn(("confirm", "Install strongly recommended Ponytail skill pack?", True), tui.events)
-
-    def test_wizard_accepts_noninteractive_soul_generation_options(self):
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
-            options = wizard(
-                [
-                    "--yes",
-                    "--generate-soul",
-                    "--soul-agent-name",
-                    "Gatot",
-                    "--soul-user-name",
-                    "Zhafron",
-                    "--soul-communication",
-                    "Blunt and concise",
-                    "--soul-language",
-                    "Bahasa Indonesia",
-                    "--soul-provider",
-                    "openrouter",
-                    "--soul-model",
-                    "anthropic/claude-sonnet-4",
-                    "--soul-overwrite",
-                ]
-            )
-
-        self.assertTrue(options.generate_soul)
-        self.assertEqual(options.soul_agent_name, "Gatot")
-        self.assertEqual(options.soul_user_name, "Zhafron")
-        self.assertEqual(options.soul_communication, "Blunt and concise")
-        self.assertEqual(options.soul_language, "Bahasa Indonesia")
-        self.assertEqual(options.soul_provider, "openrouter")
-        self.assertEqual(options.soul_model, "anthropic/claude-sonnet-4")
-        self.assertTrue(options.soul_overwrite)
-
-    def test_apply_plan_soul_only_prompts_identity_after_plan_approval(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            options = InstallerOptions(
-                base_home=Path(tmp),
-                profile="default",
-                yes=False,
-                dry_run=False,
-                install_mode="soul-only",
-                skip_lcm=True,
-                skip_mnemosyne=True,
-                skip_progress_tail=True,
-                skip_config_env=True,
-                skip_verify=True,
-                generate_soul=True,
-            )
-            plan = build_plan(options)
-            tui = FakeTui([
-                True,  # apply plan
-                "Gatot",
-                "Zhafron",
-                None,  # communication style default
-                None,  # language default
-            ])
-
-            with patch("hermes_stack_bootstrap.cli.apply_soul_generation") as soul_mock:
-                apply_plan(plan, tui)
-
-        generated_plan = soul_mock.call_args.args[0]
-        self.assertEqual(generated_plan.options.soul_agent_name, "Gatot")
-        self.assertEqual(generated_plan.options.soul_user_name, "Zhafron")
-        self.assertEqual(generated_plan.options.soul_communication, DEFAULT_SOUL_COMMUNICATION_STYLE)
-        self.assertEqual(generated_plan.options.soul_language, DEFAULT_SOUL_LANGUAGE)
-        text_prompts = [event[1] for event in tui.events if event[0] == "text"]
-        self.assertIn("Agent name", text_prompts)
-        self.assertIn("User name", text_prompts)
-        self.assertIn("Communication style", text_prompts)
-        self.assertIn("Language", text_prompts)
-        self.assertNotIn("Agent role", text_prompts)
-        self.assertNotIn("Behavior / personality", text_prompts)
-
-    def test_wizard_rejects_noninteractive_generate_soul_when_required_answers_missing(self):
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
-            with self.assertRaisesRegex(ValueError, "--soul-agent-name"):
-                wizard(["--yes", "--generate-soul"])
-
-    def test_wizard_uses_soul_style_and_language_defaults_when_omitted(self):
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
-            options = wizard(
-                [
-                    "--yes",
-                    "--generate-soul",
-                    "--soul-agent-name",
-                    "Gatot",
-                    "--soul-user-name",
-                    "Zhafron",
-                ]
-            )
-
-        self.assertEqual(options.soul_communication, DEFAULT_SOUL_COMMUNICATION_STYLE)
-        self.assertEqual(options.soul_language, DEFAULT_SOUL_LANGUAGE)
-
-    def test_build_plan_includes_soul_generation_step(self):
-        options = InstallerOptions(
-            base_home=Path("/tmp/hermes"),
-            profile="work",
-            yes=True,
-            dry_run=True,
-            generate_soul=True,
-            soul_agent_name="Gatot",
-            soul_user_name="Zhafron",
-            soul_role="operator",
-            soul_behavior="direct",
-            soul_communication="concise",
-            soul_focus="engineering",
-            soul_avoid="sycophancy",
-            soul_language="match user",
-            soul_model="gpt-5.1-mini",
-        )
-
-        plan = build_plan(options)
-        titles = [step.title for step in plan.steps]
-        commands = [step.command for step in plan.steps if step.command]
-
-        self.assertIn("Generate SOUL.md with Hermes AI backend", titles)
-        self.assertIn("HERMES_HOME=/tmp/hermes hermes -p work chat --quiet --model gpt-5.1-mini -q '<generated SOUL.md prompt>'", commands)
-
-    def test_apply_soul_generation_writes_generated_soul_and_backs_up_existing_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            target_home = Path(tmp) / "profiles" / "work"
-            target_home.mkdir(parents=True)
-            soul_path = target_home / "SOUL.md"
-            soul_path.write_text("old soul", encoding="utf-8")
-            options = InstallerOptions(
-                base_home=Path(tmp),
-                profile="work",
-                yes=True,
-                dry_run=False,
-                generate_soul=True,
-                soul_agent_name="Gatot",
-                soul_user_name="Zhafron",
-                soul_role="operator",
-                soul_behavior="direct",
-                soul_communication="concise",
-                soul_focus="engineering",
-                soul_avoid="sycophancy",
-                soul_language="match user",
-                soul_overwrite=True,
-            )
-            plan = build_plan(options)
-
-            with patch("hermes_stack_bootstrap.cli.generate_soul_with_hermes", return_value="# Identity\n\nGenerated") as gen_mock:
-                apply_soul_generation(plan)
-
-            self.assertEqual(soul_path.read_text(encoding="utf-8"), "# Identity\n\nGenerated\n")
-            backups = list((target_home / "backups").glob("hermes-stack-bootstrap-*/SOUL.md"))
-            self.assertEqual(len(backups), 1)
-            self.assertEqual(backups[0].read_text(encoding="utf-8"), "old soul")
-            gen_mock.assert_called_once()
-
-    def test_apply_soul_generation_failure_does_not_overwrite_existing_file(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            target_home = Path(tmp)
-            soul_path = target_home / "SOUL.md"
-            soul_path.write_text("old soul", encoding="utf-8")
-            options = InstallerOptions(
-                base_home=Path(tmp),
-                profile="default",
-                yes=True,
-                dry_run=False,
-                generate_soul=True,
-                soul_agent_name="Gatot",
-                soul_user_name="Zhafron",
-                soul_role="operator",
-                soul_behavior="direct",
-                soul_communication="concise",
-                soul_focus="engineering",
-                soul_avoid="sycophancy",
-                soul_language="match user",
-                soul_overwrite=True,
-            )
-            plan = build_plan(options)
-
-            with patch("hermes_stack_bootstrap.cli.generate_soul_with_hermes", side_effect=RuntimeError("backend failed")):
-                with self.assertRaisesRegex(RuntimeError, "backend failed"):
-                    apply_soul_generation(plan)
-
-            self.assertEqual(soul_path.read_text(encoding="utf-8"), "old soul")
-
-
-if __name__ == "__main__":
-    unittest.main()

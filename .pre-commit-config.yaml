@@ -1,0 +1,23 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff format
+        entry: python -m ruff format
+        language: python
+        additional_dependencies: ["ruff>=0.15,<1"]
+        types_or: [python, pyi]
+
+      - id: ruff-check
+        name: ruff check
+        entry: python -m ruff check --fix
+        language: python
+        additional_dependencies: ["ruff>=0.15,<1"]
+        types_or: [python, pyi]
+
+      - id: max-file-lines
+        name: max 600 lines per file
+        entry: python scripts/check_file_line_limit.py --max-lines 600
+        language: python
+        types_or: [python, shell, markdown, yaml, toml]
+        exclude: ^(\.venv/|build/|dist/)

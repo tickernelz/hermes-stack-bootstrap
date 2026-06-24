@@ -98,14 +98,14 @@ def normalize_hashmicro_reasoning_effort(effort: str, *, default: str = "") -> s
     if not normalized:
         return default
     if normalized not in HASHMICRO_REASONING_EFFORTS:
-        raise ValueError(
-            "HashMicro reasoning effort must be one of: " + ", ".join(HASHMICRO_REASONING_EFFORTS)
-        )
+        raise ValueError("HashMicro reasoning effort must be one of: " + ", ".join(HASHMICRO_REASONING_EFFORTS))
     return normalized
 
 
 def _hashmicro_reasoning_variant_candidate(model: str, effort: str) -> str:
-    suffix_re = re.compile(r"^(?P<prefix>.*?)(?P<reasoning>-reasoning)?-(?:minimal|low|medium|high|xhigh)$", re.IGNORECASE)
+    suffix_re = re.compile(
+        r"^(?P<prefix>.*?)(?P<reasoning>-reasoning)?-(?:minimal|low|medium|high|xhigh)$", re.IGNORECASE
+    )
     match = suffix_re.match(model)
     if match:
         return f"{match.group('prefix')}{match.group('reasoning') or ''}-{effort}"
@@ -190,7 +190,9 @@ def default_hashmicro_context_length(model: str) -> int:
     return 0
 
 
-def parse_openai_compatible_model_contexts_response(payload: bytes | str | Mapping[str, Any] | list[Any]) -> dict[str, int]:
+def parse_openai_compatible_model_contexts_response(
+    payload: bytes | str | Mapping[str, Any] | list[Any],
+) -> dict[str, int]:
     """Return context_length metadata when an OpenAI-compatible /models endpoint exposes it."""
     if isinstance(payload, bytes):
         data: Any = json.loads(payload.decode("utf-8"))
@@ -284,7 +286,9 @@ def _provider_entry(setup: HashmicroProviderSetup) -> dict[str, Any]:
         entry["model"] = setup.main_model.strip()
     model_contexts = _selected_model_contexts(setup)
     if model_contexts:
-        entry["models"] = {model: {"context_length": context_length} for model, context_length in model_contexts.items()}
+        entry["models"] = {
+            model: {"context_length": context_length} for model, context_length in model_contexts.items()
+        }
     return entry
 
 
@@ -312,7 +316,9 @@ def _ensure_mapping(value: Any) -> dict[str, Any]:
     return deepcopy(value) if isinstance(value, dict) else {}
 
 
-def merge_hashmicro_provider_config(existing: Mapping[str, Any] | None, setup: HashmicroProviderSetup) -> dict[str, Any]:
+def merge_hashmicro_provider_config(
+    existing: Mapping[str, Any] | None, setup: HashmicroProviderSetup
+) -> dict[str, Any]:
     """Merge HashMicro named provider and selected model routes into config."""
     cfg: dict[str, Any] = deepcopy(dict(existing or {}))
     if not setup.enabled:

@@ -20,9 +20,9 @@ class InstallScriptTests(unittest.TestCase):
             fake_python = runtime_bin / "python3"
             fake_python.write_text(
                 "#!/bin/sh\n"
-                "case \"$1\" in\n"
-                "  -m) exec \"" + system_python + "\" \"$@\" ;;\n"
-                "  *) exec \"" + system_python + "\" \"$@\" ;;\n"
+                'case "$1" in\n'
+                '  -m) exec "' + system_python + '" "$@" ;;\n'
+                '  *) exec "' + system_python + '" "$@" ;;\n'
                 "esac\n",
                 encoding="utf-8",
             )
@@ -71,6 +71,7 @@ class InstallScriptTests(unittest.TestCase):
             )
             self.assertNotIn("/usr/bin/env: invalid option", completed.stderr)
             self.assertIn(f"Hermes Python       : {fake_python}", completed.stdout)
+
     def test_interactive_bootstrap_installs_tui_dependencies_in_temp_venv_not_runtime(self):
         project_root = Path(__file__).resolve().parents[1]
         with tempfile.TemporaryDirectory() as tmp:
@@ -86,21 +87,21 @@ class InstallScriptTests(unittest.TestCase):
                 "#!/bin/sh\n"
                 f"RUNTIME_LOG={str(runtime_log)!r}\n"
                 f"BOOTSTRAP_LOG={str(bootstrap_log)!r}\n"
-                "if [ \"$1\" = \"-c\" ]; then echo deps-fingerprint; exit 0; fi\n"
-                "printf '%s\\n' \"runtime:$*\" >> \"$RUNTIME_LOG\"\n"
-                "if [ \"$1\" = \"-m\" ] && [ \"$2\" = \"pip\" ]; then echo 'runtime pip must not run' >&2; exit 88; fi\n"
-                "if [ \"$1\" = \"-m\" ] && [ \"$2\" = \"venv\" ]; then\n"
-                "  venv_dir=\"$3\"\n"
-                "  mkdir -p \"$venv_dir/bin\"\n"
-                "  cat > \"$venv_dir/bin/python\" <<EOF\n"
+                'if [ "$1" = "-c" ]; then echo deps-fingerprint; exit 0; fi\n'
+                'printf \'%s\\n\' "runtime:$*" >> "$RUNTIME_LOG"\n'
+                'if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then echo \'runtime pip must not run\' >&2; exit 88; fi\n'
+                'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then\n'
+                '  venv_dir="$3"\n'
+                '  mkdir -p "$venv_dir/bin"\n'
+                '  cat > "$venv_dir/bin/python" <<EOF\n'
                 "#!/bin/sh\n"
                 f"BOOTSTRAP_LOG={str(bootstrap_log)!r}\n"
-                "printf '%s\\n' \"bootstrap:\\$*\" >> \"\\$BOOTSTRAP_LOG\"\n"
-                "if [ \"\\$1\" = \"-m\" ] && [ \"\\$2\" = \"pip\" ]; then exit 0; fi\n"
-                "if [ \"\\$1\" = \"-m\" ] && [ \"\\$2\" = \"hermes_stack_bootstrap\" ]; then exit 0; fi\n"
+                'printf \'%s\\n\' "bootstrap:\\$*" >> "\\$BOOTSTRAP_LOG"\n'
+                'if [ "\\$1" = "-m" ] && [ "\\$2" = "pip" ]; then exit 0; fi\n'
+                'if [ "\\$1" = "-m" ] && [ "\\$2" = "hermes_stack_bootstrap" ]; then exit 0; fi\n'
                 "exit 64\n"
                 "EOF\n"
-                "  chmod +x \"$venv_dir/bin/python\"\n"
+                '  chmod +x "$venv_dir/bin/python"\n'
                 "  exit 0\n"
                 "fi\n"
                 "exit 64\n",
@@ -110,7 +111,9 @@ class InstallScriptTests(unittest.TestCase):
             hermes = cli_bin / "hermes"
             hermes.write_text(
                 "#!/bin/sh\n"
-                "if [ \"$1 $2\" = \"config path\" ]; then echo '" + str(root / "home" / ".hermes" / "config.yaml") + "'; fi\n",
+                'if [ "$1 $2" = "config path" ]; then echo \''
+                + str(root / "home" / ".hermes" / "config.yaml")
+                + "'; fi\n",
                 encoding="utf-8",
             )
             hermes.chmod(0o755)
@@ -124,7 +127,14 @@ class InstallScriptTests(unittest.TestCase):
             env["HERMES_STACK_SOURCE_DIR"] = str(project_root)
 
             completed = subprocess.run(
-                ["bash", str(project_root / "install.sh"), "--dry-run", "--skip-lcm", "--skip-mnemosyne", "--skip-progress-tail"],
+                [
+                    "bash",
+                    str(project_root / "install.sh"),
+                    "--dry-run",
+                    "--skip-lcm",
+                    "--skip-mnemosyne",
+                    "--skip-progress-tail",
+                ],
                 env=env,
                 cwd=project_root,
                 text=True,
@@ -158,18 +168,18 @@ class InstallScriptTests(unittest.TestCase):
             fake_python.write_text(
                 "#!/bin/sh\n"
                 f"LOG={str(log_path)!r}\n"
-                "if [ \"$1\" = \"-c\" ]; then echo deps-fingerprint; exit 0; fi\n"
-                "if [ \"$1\" = \"-m\" ] && [ \"$2\" = \"venv\" ]; then\n"
-                "  venv_dir=\"$3\"\n"
-                "  mkdir -p \"$venv_dir/bin\"\n"
-                "  cat > \"$venv_dir/bin/python\" <<EOF\n"
+                'if [ "$1" = "-c" ]; then echo deps-fingerprint; exit 0; fi\n'
+                'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then\n'
+                '  venv_dir="$3"\n'
+                '  mkdir -p "$venv_dir/bin"\n'
+                '  cat > "$venv_dir/bin/python" <<EOF\n'
                 "#!/bin/sh\n"
                 f"LOG={str(log_path)!r}\n"
-                "printf '%s\\n' \"bootstrap:\\$*\" >> \"\\$LOG\"\n"
-                "if [ \"\\$1\" = \"-m\" ] && [ \"\\$2\" = \"pip\" ]; then echo 'pip exploded' >&2; exit 23; fi\n"
+                'printf \'%s\\n\' "bootstrap:\\$*" >> "\\$LOG"\n'
+                'if [ "\\$1" = "-m" ] && [ "\\$2" = "pip" ]; then echo \'pip exploded\' >&2; exit 23; fi\n'
                 "exit 64\n"
                 "EOF\n"
-                "  chmod +x \"$venv_dir/bin/python\"\n"
+                '  chmod +x "$venv_dir/bin/python"\n'
                 "  exit 0\n"
                 "fi\n"
                 "exit 64\n",
@@ -205,8 +215,8 @@ class InstallScriptTests(unittest.TestCase):
             fake_python.write_text(
                 "#!/bin/sh\n"
                 f"LOG={str(log_path)!r}\n"
-                "printf '%s\\n' \"$*\" >> \"$LOG\"\n"
-                "if [ \"$1\" = \"-m\" ] && [ \"$2\" = \"hermes_stack_bootstrap\" ]; then exit 0; fi\n"
+                'printf \'%s\\n\' "$*" >> "$LOG"\n'
+                'if [ "$1" = "-m" ] && [ "$2" = "hermes_stack_bootstrap" ]; then exit 0; fi\n'
                 "exit 64\n",
                 encoding="utf-8",
             )
