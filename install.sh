@@ -7,11 +7,10 @@ SOURCE_DIR="${HERMES_STACK_SOURCE_DIR:-}"
 BOOTSTRAP_DEPS=("PyYAML>=6" "rich>=13" "prompt_toolkit>=3")
 TMP_DIR=""
 BOOTSTRAP_VENV_DIR=""
+BOOTSTRAP_PYTHON=""
+BOOTSTRAP_CACHE_DIR="${HERMES_STACK_BOOTSTRAP_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/hermes-stack-bootstrap}"
 
 cleanup() {
-  if [[ -n "${BOOTSTRAP_VENV_DIR:-}" ]]; then
-    rm -rf "$BOOTSTRAP_VENV_DIR"
-  fi
   if [[ -n "${TMP_DIR:-}" ]]; then
     rm -rf "$TMP_DIR"
   fi
@@ -321,30 +320,76 @@ bootstrap_python_for_venv() {
   return 1
 }
 
+bootstrap_deps_fingerprint() {
+  printf '%s\n' "${BOOTSTRAP_DEPS[@]}" | "$PYTHON_BIN" -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())'
+}
+
+python_cache_tag() {
+  local python_bin="$1"
+  local version
+  version="$($python_bin - <<'PY' 2>/dev/null || true
+import sys
+print(f"py{sys.version_info.major}.{sys.version_info.minor}")
+PY
+)"
+  if [[ -z "$version" ]]; then
+    version="py-unknown"
+  fi
+  printf '%s\n' "$version"
+}
+
+bootstrap_marker_path() {
+  printf '%s\n' "$BOOTSTRAP_VENV_DIR/.hermes-stack-bootstrap-deps.sha256"
+}
+
+cached_bootstrap_venv_valid() {
+  local expected="$1"
+  [[ "${HERMES_STACK_RECREATE_BOOTSTRAP_VENV:-}" != "1" ]] || return 1
+  local bootstrap_python
+  bootstrap_python="$(bootstrap_python_for_venv "$BOOTSTRAP_VENV_DIR" || true)"
+  [[ -n "$bootstrap_python" ]] || return 1
+  [[ -f "$(bootstrap_marker_path)" ]] || return 1
+  [[ "$(cat "$(bootstrap_marker_path)" 2>/dev/null || true)" == "$expected" ]]
+}
+
 create_bootstrap_venv() {
-  BOOTSTRAP_VENV_DIR="$(mktemp -d)"
+  local fingerprint
+  fingerprint="$(bootstrap_deps_fingerprint)"
+  local tag
+  tag="$(python_cache_tag "$PYTHON_BIN")"
+  BOOTSTRAP_VENV_DIR="$BOOTSTRAP_CACHE_DIR/bootstrap-venv-$tag"
+  if cached_bootstrap_venv_valid "$fingerprint"; then
+    BOOTSTRAP_PYTHON="$(bootstrap_python_for_venv "$BOOTSTRAP_VENV_DIR")"
+    return 0
+  fi
+  rm -rf "$BOOTSTRAP_VENV_DIR"
+  mkdir -p "$BOOTSTRAP_CACHE_DIR"
   echo "Creating isolated installer venv with ${PYTHON_BIN}" >&2
   if ! "$PYTHON_BIN" -m venv "$BOOTSTRAP_VENV_DIR"; then
     {
       echo "Error: Failed to create isolated installer venv."
       echo "Python: ${PYTHON_BIN}"
-      echo "Manual fallback: ${PYTHON_BIN} -m venv /tmp/hermes-stack-bootstrap-venv"
+      echo "Manual fallback: ${PYTHON_BIN} -m venv ${BOOTSTRAP_VENV_DIR}"
       echo "Then install TUI deps in that venv and run this installer module from the source checkout."
     } >&2
     return 1
   fi
-  local bootstrap_python
-  bootstrap_python="$(bootstrap_python_for_venv "$BOOTSTRAP_VENV_DIR")" || {
+  BOOTSTRAP_PYTHON="$(bootstrap_python_for_venv "$BOOTSTRAP_VENV_DIR")" || {
     echo "Error: Isolated installer venv did not contain a Python executable: ${BOOTSTRAP_VENV_DIR}" >&2
     return 1
   }
-  printf '%s\n' "$bootstrap_python"
 }
 
 install_bootstrap_deps() {
   local bootstrap_python="$1"
+  local fingerprint
+  fingerprint="$(bootstrap_deps_fingerprint)"
+  if [[ -f "$(bootstrap_marker_path)" && "$(cat "$(bootstrap_marker_path)" 2>/dev/null || true)" == "$fingerprint" ]]; then
+    return 0
+  fi
   echo "Installing TUI bootstrap dependencies in isolated venv with ${bootstrap_python}"
-  if "$bootstrap_python" -m pip install --upgrade --no-cache-dir "${BOOTSTRAP_DEPS[@]}"; then
+  if PYTHONPATH= PYTHONHOME= PIP_DISABLE_PIP_VERSION_CHECK=1 VIRTUAL_ENV="$BOOTSTRAP_VENV_DIR" "$bootstrap_python" -m pip install --upgrade --no-cache-dir "${BOOTSTRAP_DEPS[@]}"; then
+    printf '%s\n' "$fingerprint" > "$(bootstrap_marker_path)"
     return 0
   fi
   local manual_deps="${BOOTSTRAP_DEPS[*]}"
@@ -361,7 +406,8 @@ install_bootstrap_deps() {
 run_bootstrap() {
   local run_python="$PYTHON_BIN"
   if should_bootstrap_tui_deps "$@"; then
-    run_python="$(create_bootstrap_venv)"
+    create_bootstrap_venv
+    run_python="$BOOTSTRAP_PYTHON"
     install_bootstrap_deps "$run_python"
   fi
   if [[ -t 0 ]]; then

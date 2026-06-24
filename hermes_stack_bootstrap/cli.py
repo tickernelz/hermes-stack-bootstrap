@@ -14,10 +14,11 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Mapping, Sequence
+from typing import Iterable, Iterator, Mapping, Sequence
 
 from .config_merge import build_target_config, read_config, write_config
 from .env_template import (
@@ -30,6 +31,18 @@ from .env_template import (
 )
 from .hermes_discovery import HermesRuntime, discover_hermes_runtime
 from .hermes_models import ProviderChoice, model_choices_for_provider, provider_choices
+from .provider_setup import (
+    AUXILIARY_TASKS,
+    HASHMICRO_BASE_URL,
+    HASHMICRO_KEY_ENV,
+    HASHMICRO_PROVIDER_NAME,
+    HashmicroProviderSetup,
+    build_hashmicro_env_values,
+    fetch_openai_compatible_models,
+    merge_hashmicro_provider_config,
+    parse_aux_model_overrides,
+    secret_env_keys,
+)
 from .soul_generator import (
     DEFAULT_SOUL_COMMUNICATION_STYLE,
     DEFAULT_SOUL_LANGUAGE,
@@ -50,7 +63,7 @@ HMX_KNOWLEDGE_REPO = os.environ.get(
 IMPECCABLE_REPO = "https://github.com/pbakaus/impeccable"
 PONYTAIL_REPO = "https://github.com/DietrichGebert/ponytail"
 REPO_ROOT_SKILL_INSTALL_MARKERS = (".git", "package.json", "skills")
-SENSITIVE_ENV_KEYS = {"MNEMOSYNE_EMBEDDING_API_KEY"}
+SENSITIVE_ENV_KEYS = {"MNEMOSYNE_EMBEDDING_API_KEY", "XAI_HASHMICRO_API_KEY", "GITLAB_TOKEN"}
 INSTALL_MODE_LABELS = {
     "full": "Full process",
     "plugin-skill-only": "Plugin & skill only",
@@ -71,6 +84,7 @@ class RichPromptTui:
         try:
             from prompt_toolkit import prompt as toolkit_prompt  # type: ignore
             from prompt_toolkit.completion import WordCompleter  # type: ignore
+            from prompt_toolkit.shortcuts import checkboxlist_dialog  # type: ignore
             from rich.console import Console  # type: ignore
             from rich.panel import Panel  # type: ignore
             from rich.table import Table  # type: ignore
@@ -83,12 +97,16 @@ class RichPromptTui:
             ) from exc
         self._prompt = toolkit_prompt
         self._word_completer = WordCompleter
+        self._checkboxlist_dialog = checkboxlist_dialog
         self.console = Console()
         self._panel = Panel
         self._table = Table
 
     def banner(self, title: str, subtitle: str) -> None:
         self.console.print(self._panel(subtitle, title=title, border_style="cyan"))
+
+    def step(self, title: str) -> None:
+        self.console.print(f"\n[bold cyan]{title}[/bold cyan]")
 
     def text(self, prompt: str, default: str = "") -> str:
         suffix = f" [{default}]" if default else ""
@@ -134,6 +152,23 @@ class RichPromptTui:
                 if answer.lower() == choice.lower():
                     return choice
             self.console.print(f"[yellow]Choose one of: {', '.join(choices)}[/yellow]")
+
+    def multi_select(self, prompt: str, choices: Sequence[str], defaults: Sequence[str] = ()) -> tuple[str, ...]:
+        choices = tuple(choices)
+        if not choices:
+            return tuple(defaults)
+        defaults = tuple(choice for choice in defaults if choice in choices)
+        result = self._checkboxlist_dialog(
+            title=prompt,
+            text="Use Space to toggle, Enter to continue.",
+            values=[(choice, choice) for choice in choices],
+            default_values=list(defaults),
+        ).run()
+        selected = tuple(result or ())
+        return selected or defaults or (choices[0],)
+
+    def status(self, message: str):
+        return self.console.status(message, spinner="dots")
 
     def runtime_summary(self, runtime: HermesRuntime) -> None:
         table = self._table(title="Detected Hermes runtime", show_header=False)
@@ -189,6 +224,15 @@ class InstallerOptions:
     install_impeccable: bool = False
     install_ponytail: bool = False
     hmx_knowledge_url: str = HMX_KNOWLEDGE_REPO
+    hmx_gitlab_token: str = ""
+    setup_hashmicro_provider: bool = False
+    hashmicro_base_url: str = HASHMICRO_BASE_URL
+    hashmicro_provider_name: str = HASHMICRO_PROVIDER_NAME
+    hashmicro_key_env: str = HASHMICRO_KEY_ENV
+    hashmicro_api_key: str = ""
+    hashmicro_main_model: str = ""
+    hashmicro_delegation_model: str = ""
+    hashmicro_auxiliary_models: Mapping[str, str] = dataclasses.field(default_factory=dict)
     generate_soul: bool = False
     soul_agent_name: str = ""
     soul_user_name: str = ""
@@ -242,7 +286,7 @@ SUPERPOWERS_SKILL_PACK = SkillPackSpec(
     skill_name_prefix="superpowers-",
     body_token_prefixes=SUPERPOWERS_SKILL_TOKENS,
 )
-HMX_KNOWLEDGE_SKILL_PACK = SkillPackSpec(name="hmx-knowledge", repo_url=HMX_KNOWLEDGE_REPO)
+HMX_KNOWLEDGE_SKILL_PACK = SkillPackSpec(name="hmx-knowledge", repo_url=HMX_KNOWLEDGE_REPO, source_subdir="skills")
 IMPECCABLE_SKILL_PACK = SkillPackSpec(name="impeccable", repo_url=IMPECCABLE_REPO, source_subdir="plugin/skills")
 PONYTAIL_SKILL_PACK = SkillPackSpec(name="ponytail", repo_url=PONYTAIL_REPO, source_subdir="skills")
 
@@ -310,6 +354,25 @@ def parse_profiles(raw_profiles: Iterable[str] | str | None) -> tuple[str, ...]:
                 profiles.append(profile)
                 seen.add(profile)
     return tuple(profiles or ["default"])
+
+
+def profile_choices_for_home(base_home: Path) -> tuple[str, ...]:
+    """Return selectable Hermes profiles from the target home."""
+    choices = ["default"]
+    profiles_dir = base_home.expanduser() / "profiles"
+    if profiles_dir.is_dir():
+        for path in sorted(profiles_dir.iterdir(), key=lambda item: item.name.lower()):
+            if path.is_dir() and not path.name.startswith("."):
+                choices.append(path.name)
+    return tuple(dict.fromkeys(choices))
+
+
+def prompt_profiles(tui: RichPromptTui, base_home: Path, current_profiles: Iterable[str] | str | None = None) -> tuple[str, ...]:
+    choices = profile_choices_for_home(base_home)
+    defaults = parse_profiles(current_profiles)
+    if len(choices) == 1:
+        return tuple(getattr(tui, "multi_select")("Target profile(s)", choices, defaults))
+    return tuple(getattr(tui, "multi_select")("Target profile(s)", choices, defaults))
 
 
 def hermes_python_for(base_home: Path) -> Path:
@@ -927,15 +990,63 @@ def stage_skill_pack(source_root: Path, dest: Path, spec: SkillPackSpec) -> None
         rewrite_staged_skill_support_files(target, spec)
 
 
-def install_skill_pack(spec: SkillPackSpec, dest: Path, *, dry_run: bool) -> None:
+def gitlab_https_url(repo_url: str) -> str:
+    if repo_url.startswith("git@gitlab.com:"):
+        return "https://gitlab.com/" + repo_url.removeprefix("git@gitlab.com:")
+    if repo_url.startswith("https://gitlab.com/"):
+        return repo_url
+    return repo_url
+
+
+def write_gitlab_askpass(token: str) -> Path:
+    handle = tempfile.NamedTemporaryFile("w", delete=False, prefix="hermes-stack-gitlab-askpass-", encoding="utf-8")
+    path = Path(handle.name)
+    handle.write("#!/usr/bin/env sh\n")
+    handle.write("case \"$1\" in\n")
+    handle.write("  *Username*) printf '%s\\n' oauth2 ;;\n")
+    handle.write(f"  *Password*) printf '%s\\n' {shlex.quote(token)} ;;\n")
+    handle.write("  *) printf '\\n' ;;\n")
+    handle.write("esac\n")
+    handle.close()
+    path.chmod(0o700)
+    return path
+
+
+def clone_skill_pack_repo(spec: SkillPackSpec, source_root: Path, *, dry_run: bool, gitlab_token: str = "") -> None:
+    command = ["git", "clone", "--depth=1", spec.repo_url, str(source_root)]
     if dry_run:
-        run_command(["git", "clone", "--depth=1", spec.repo_url, f"<temporary-directory>/{spec.name}"], dry_run=True)
+        run_command(command, dry_run=True)
+        return
+    try:
+        run_command(command, dry_run=False)
+        return
+    except subprocess.CalledProcessError:
+        if not gitlab_token or "gitlab.com" not in spec.repo_url:
+            raise
+    askpass = write_gitlab_askpass(gitlab_token)
+    try:
+        retry_env = {
+            "GIT_ASKPASS": str(askpass),
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+        run_command(
+            ["git", "clone", "--depth=1", gitlab_https_url(spec.repo_url), str(source_root)],
+            dry_run=False,
+            env=retry_env,
+        )
+    finally:
+        askpass.unlink(missing_ok=True)
+
+
+def install_skill_pack(spec: SkillPackSpec, dest: Path, *, dry_run: bool, gitlab_token: str = "") -> None:
+    if dry_run:
+        clone_skill_pack_repo(spec, Path(f"<temporary-directory>/{spec.name}"), dry_run=True, gitlab_token=gitlab_token)
         print(f"DRY-RUN stage Hermes skills from {spec.repo_url} into {dest}")
         return
 
     with tempfile.TemporaryDirectory(prefix=f"hermes-stack-{spec.name}-") as tmp:
         source_root = Path(tmp) / spec.name
-        run_command(["git", "clone", "--depth=1", spec.repo_url, str(source_root)], dry_run=False)
+        clone_skill_pack_repo(spec, source_root, dry_run=False, gitlab_token=gitlab_token)
         stage_skill_pack(source_root, dest, spec)
 
 
@@ -946,7 +1057,7 @@ def optional_skill_packs(options: InstallerOptions, target_home: Path) -> list[t
     if options.install_hmx_knowledge:
         packs.append(
             (
-                SkillPackSpec(name="hmx-knowledge", repo_url=options.hmx_knowledge_url),
+                dataclasses.replace(HMX_KNOWLEDGE_SKILL_PACK, repo_url=options.hmx_knowledge_url),
                 skill_vendor_dir(target_home, "hmx-knowledge"),
             )
         )
@@ -959,7 +1070,14 @@ def optional_skill_packs(options: InstallerOptions, target_home: Path) -> list[t
 
 def install_optional_skills(plan: InstallPlan) -> None:
     for spec, dest in optional_skill_packs(plan.options, plan.target_home):
-        install_skill_pack(spec, dest, dry_run=plan.options.dry_run)
+        token = plan.options.hmx_gitlab_token if spec.name == "hmx-knowledge" else ""
+        install_skill_pack(spec, dest, dry_run=plan.options.dry_run, gitlab_token=token)
+
+
+def hmx_env_values(options: InstallerOptions) -> dict[str, str]:
+    if options.install_hmx_knowledge and options.hmx_gitlab_token.strip():
+        return {"GITLAB_TOKEN": options.hmx_gitlab_token.strip()}
+    return {}
 
 
 def merge_config_and_env(plan: InstallPlan) -> None:
@@ -983,6 +1101,7 @@ def merge_config_and_env(plan: InstallPlan) -> None:
     if plan.options.dry_run:
         current_config = read_config(plan.config_path) if plan.config_path.exists() else {}
         merged_config = build_target_config(current_config)
+        merged_config = merge_hashmicro_provider_config(merged_config, hashmicro_setup_from_options(plan.options))
         print("\n--- config.yaml preview ---")
         try:
             import yaml  # type: ignore
@@ -993,7 +1112,8 @@ def merge_config_and_env(plan: InstallPlan) -> None:
         except Exception:
             print(merged_config)
         print("\n--- .env additions/updates preview ---")
-        print(render_env_block(env_values, redact_keys=SENSITIVE_ENV_KEYS), end="")
+        preview_env_values = {**env_values, **hmx_env_values(plan.options), **build_hashmicro_env_values(hashmicro_setup_from_options(plan.options))}
+        print(render_env_block(preview_env_values, redact_keys=SENSITIVE_ENV_KEYS | secret_env_keys(preview_env_values)), end="")
         return
 
     plan.target_home.mkdir(parents=True, exist_ok=True)
@@ -1002,10 +1122,13 @@ def merge_config_and_env(plan: InstallPlan) -> None:
         print(f"Backup written: {backup_dir}")
 
     current_config = read_config(plan.config_path)
-    write_config(plan.config_path, build_target_config(current_config))
+    target_config = build_target_config(current_config)
+    target_config = merge_hashmicro_provider_config(target_config, hashmicro_setup_from_options(plan.options))
+    write_config(plan.config_path, target_config)
 
     existing_env = plan.env_path.read_text() if plan.env_path.exists() else ""
-    plan.env_path.write_text(merge_env_text(existing_env, env_values, managed_keys=managed_env_keys()))
+    env_values = {**env_values, **hmx_env_values(plan.options), **build_hashmicro_env_values(hashmicro_setup_from_options(plan.options))}
+    plan.env_path.write_text(merge_env_text(existing_env, env_values, managed_keys=managed_env_keys() | set(env_values)))
 
 
 def backup_soul_file(soul_path: Path) -> Path:
@@ -1031,7 +1154,7 @@ def resolve_soul_overwrite_before_apply(plan: InstallPlan, ui: RichPromptTui | N
     return dataclasses.replace(plan, options=dataclasses.replace(plan.options, soul_overwrite=True))
 
 
-def apply_soul_generation(plan: InstallPlan) -> None:
+def apply_soul_generation(plan: InstallPlan, ui: RichPromptTui | None = None) -> None:
     if not plan.options.generate_soul:
         return
     soul_path = plan.target_home / "SOUL.md"
@@ -1042,14 +1165,15 @@ def apply_soul_generation(plan: InstallPlan) -> None:
     if soul_path.exists() and not plan.options.soul_overwrite:
         raise ValueError(f"SOUL.md already exists at {soul_path}; pass --soul-overwrite to replace it")
 
-    generated = generate_soul_with_hermes(
-        base_home=plan.options.base_home.expanduser(),
-        profile=plan.options.profile,
-        provider=plan.options.soul_provider,
-        model=plan.options.soul_model,
-        answers=soul_answers_from_options(plan.options),
-        hermes_bin=hermes_bin_for_options(plan.options),
-    )
+    with tui_status(ui, "Generating SOUL.md with Hermes AI backend..."):
+        generated = generate_soul_with_hermes(
+            base_home=plan.options.base_home.expanduser(),
+            profile=plan.options.profile,
+            provider=plan.options.soul_provider,
+            model=plan.options.soul_model,
+            answers=soul_answers_from_options(plan.options),
+            hermes_bin=hermes_bin_for_options(plan.options),
+        )
 
     plan.target_home.mkdir(parents=True, exist_ok=True)
     if soul_path.exists():
@@ -1106,14 +1230,14 @@ def apply_plan(plan: InstallPlan, ui: RichPromptTui | None = None) -> None:
             soul_options = prompt_soul_options(soul_options, ui)
         soul_plan = dataclasses.replace(plan, options=soul_options)
         soul_plan = resolve_soul_overwrite_before_apply(soul_plan, ui)
-        apply_soul_generation(soul_plan)
+        apply_soul_generation(soul_plan, ui)
     elif not plan.options.yes:
         ui = require_tui(ui)
         if prompt_yes_no("Generate SOUL.md with Hermes AI backend now?", False, ui):
             soul_options = prompt_soul_options(plan.options, ui)
             soul_plan = dataclasses.replace(plan, options=soul_options)
             soul_plan = resolve_soul_overwrite_before_apply(soul_plan, ui)
-            apply_soul_generation(soul_plan)
+            apply_soul_generation(soul_plan, ui)
     print("\nDone. Restart Hermes manually after applying changes: /restart")
 
 
@@ -1134,6 +1258,23 @@ def require_tui(ui: RichPromptTui | None = None) -> RichPromptTui:
 
 def prompt_default(prompt: str, default: str, ui: RichPromptTui | None = None) -> str:
     return require_tui(ui).text(prompt, default)
+
+
+def tui_step(tui: RichPromptTui, title: str) -> None:
+    step = getattr(tui, "step", None)
+    if callable(step):
+        step(title)
+
+
+@contextmanager
+def tui_status(ui: RichPromptTui | None, message: str) -> Iterator[None]:
+    status = getattr(ui, "status", None) if ui is not None else None
+    if callable(status):
+        with status(message):
+            yield
+        return
+    print(message)
+    yield
 
 
 def _env_get(env: os._Environ[str] | dict[str, str], key: str, default: str = "") -> str:
@@ -1172,6 +1313,35 @@ def apply_full_online_embedding_env_defaults(args: argparse.Namespace, env: os._
         args.mnemosyne_embedding_model = _env_get(env, "MNEMOSYNE_EMBEDDING_MODEL", "")
     if not args.mnemosyne_embedding_dim:
         args.mnemosyne_embedding_dim = _env_get(env, "MNEMOSYNE_EMBEDDING_DIM", "")
+
+
+def hashmicro_auxiliary_models_from_args(args: argparse.Namespace) -> dict[str, str]:
+    models: dict[str, str] = {}
+    aux_all = str(getattr(args, "aux_all_model", "") or "").strip()
+    if aux_all:
+        models.update({task: aux_all for task in AUXILIARY_TASKS})
+    models.update(parse_aux_model_overrides(getattr(args, "aux_model", []) or []))
+    return models
+
+
+def hashmicro_setup_from_options(options: InstallerOptions) -> HashmicroProviderSetup:
+    return HashmicroProviderSetup(
+        enabled=options.setup_hashmicro_provider,
+        base_url=options.hashmicro_base_url,
+        provider_name=options.hashmicro_provider_name,
+        key_env=options.hashmicro_key_env,
+        api_key=options.hashmicro_api_key,
+        main_model=options.hashmicro_main_model,
+        delegation_model=options.hashmicro_delegation_model,
+        auxiliary_models=options.hashmicro_auxiliary_models,
+    )
+
+
+def apply_hashmicro_env_defaults(args: argparse.Namespace, env: os._Environ[str] | dict[str, str]) -> None:
+    if not getattr(args, "setup_hashmicro_provider", False):
+        return
+    key_env = str(getattr(args, "hashmicro_key_env", "") or HASHMICRO_KEY_ENV).strip()
+    args.hashmicro_api_key = _env_get(env, key_env, "")
 
 
 def validate_soul_options(args: argparse.Namespace) -> None:
@@ -1258,6 +1428,61 @@ def select_model_from_detected_providers(
         return tui.text(f"{prompt} (empty = Hermes auxiliary/default)", current_model or default_model)
     default = current_model if current_model in models else (default_model if default_model in models else models[0])
     return tui.select(prompt, models, default)
+
+
+def choose_model_from_options(tui: RichPromptTui, prompt: str, models: list[str], current: str = "") -> str:
+    if models:
+        default = current if current in models else models[0]
+        return tui.select(prompt, tuple(models), default)
+    return tui.text(f"{prompt} (manual)", current)
+
+
+def prompt_hashmicro_provider_setup(args: argparse.Namespace, tui: RichPromptTui, env: os._Environ[str] | dict[str, str]) -> None:
+    if not prompt_yes_no("Configure recommended xAI HashMicro provider?", bool(args.setup_hashmicro_provider), tui):
+        return
+    args.setup_hashmicro_provider = True
+    if not getattr(args, "hashmicro_api_key", ""):
+        args.hashmicro_api_key = _env_get(env, args.hashmicro_key_env, "")
+    if not args.hashmicro_api_key:
+        args.hashmicro_api_key = tui.password("HashMicro API key (hidden; saved as XAI_HASHMICRO_API_KEY)").strip()
+    models: list[str] = []
+    if args.hashmicro_api_key:
+        try:
+            models = fetch_openai_compatible_models(args.hashmicro_base_url, args.hashmicro_api_key)
+        except Exception as exc:
+            print(f"Warning: could not fetch HashMicro model list: {exc}", file=sys.stderr)
+    args.hashmicro_detected_models = tuple(models)
+    args.main_model = choose_model_from_options(tui, "HashMicro main model", models, args.main_model)
+    args.delegation_model = choose_model_from_options(tui, "HashMicro delegation model", models, args.delegation_model or args.main_model)
+    aux_default = choose_model_from_options(tui, "HashMicro default auxiliary model", models, getattr(args, "aux_all_model", "") or args.delegation_model or args.main_model)
+    args.aux_all_model = aux_default
+    if aux_default:
+        args.aux_model = [override for override in (getattr(args, "aux_model", []) or []) if "=" in override]
+    if prompt_yes_no("Customize per auxiliary task?", False, tui):
+        overrides = parse_aux_model_overrides(args.aux_model or [])
+        for task in AUXILIARY_TASKS:
+            current = overrides.get(task, aux_default)
+            selected = choose_model_from_options(tui, f"HashMicro auxiliary model for {task}", models, current)
+            if selected:
+                overrides[task] = selected
+        args.aux_model = [f"{task}={model}" for task, model in overrides.items()]
+
+
+def hashmicro_provider_choice_from_args(args: argparse.Namespace) -> ProviderChoice | None:
+    models = tuple(getattr(args, "hashmicro_detected_models", ()) or ())
+    if not getattr(args, "setup_hashmicro_provider", False) or not models:
+        return None
+    label = f"xAI HashMicro — {len(models)} models"
+    return ProviderChoice(f"custom:{args.hashmicro_provider_name}", label, models)
+
+
+def prompt_hmx_gitlab_token_if_needed(args: argparse.Namespace, tui: RichPromptTui, env: os._Environ[str] | dict[str, str]) -> None:
+    if not args.install_hmx_knowledge:
+        return
+    if not getattr(args, "hmx_gitlab_token", ""):
+        args.hmx_gitlab_token = _env_get(env, "GITLAB_TOKEN", "")
+    if not args.hmx_gitlab_token:
+        args.hmx_gitlab_token = tui.password("HMX GitLab token (hidden; empty to use SSH/credential helper only)").strip()
 
 
 def prompt_soul_answers(args: argparse.Namespace, ui: RichPromptTui | None = None) -> None:
@@ -1409,11 +1634,21 @@ def wizard(
         default=_env_get(runtime_env, "HMX_KNOWLEDGE_GIT_URL", HMX_KNOWLEDGE_REPO),
         help="Private HMX knowledge repo URL. Prefer SSH or a git credential helper; do not put tokens in shell history.",
     )
+    parser.set_defaults(hmx_gitlab_token=_env_get(runtime_env, "GITLAB_TOKEN", ""))
+    parser.add_argument("--setup-hashmicro-provider", action="store_true", help="Configure the recommended xAI HashMicro OpenAI-compatible provider.")
+    parser.add_argument("--hashmicro-base-url", default=_env_get(runtime_env, "HERMES_STACK_HASHMICRO_BASE_URL", HASHMICRO_BASE_URL))
+    parser.add_argument("--hashmicro-provider-name", default=_env_get(runtime_env, "HERMES_STACK_HASHMICRO_PROVIDER_NAME", HASHMICRO_PROVIDER_NAME))
+    parser.add_argument("--hashmicro-key-env", default=_env_get(runtime_env, "HERMES_STACK_HASHMICRO_KEY_ENV", HASHMICRO_KEY_ENV))
+    parser.add_argument("--main-model", default=_env_get(runtime_env, "HERMES_STACK_MAIN_MODEL", ""), help="Main Hermes model when --setup-hashmicro-provider is enabled.")
+    parser.add_argument("--delegation-model", default=_env_get(runtime_env, "HERMES_STACK_DELEGATION_MODEL", ""), help="delegate_task model when --setup-hashmicro-provider is enabled.")
+    parser.add_argument("--aux-all-model", default=_env_get(runtime_env, "HERMES_STACK_AUX_ALL_MODEL", ""), help="Use one model for all known auxiliary tasks.")
+    parser.add_argument("--aux-model", action="append", default=[], help="Auxiliary task override in task=model form. Repeatable.")
     args = parser.parse_args(list(argv) if argv is not None else None)
     args.install_mode = normalize_install_mode(args.install_mode)
     if args.yes:
         apply_install_mode_defaults(args)
     apply_full_online_embedding_env_defaults(args, runtime_env)
+    apply_hashmicro_env_defaults(args, runtime_env)
 
     home = Path(args.home).expanduser() if args.home else detect_base_home(args.hermes_bin or None)
     runtime = discover_hermes_runtime(
@@ -1429,10 +1664,12 @@ def wizard(
             "Hermes Stack Bootstrap",
             "Installs hermes-lcm, Mnemosyne, and hermes-progress-tail. Optional skill packs are prompted before install.",
         )
+        tui_step(tui, "1. Install scope")
         args.install_mode = INSTALL_MODE_VALUES[
             tui.select("Install mode", tuple(INSTALL_MODE_VALUES), install_mode_label(args.install_mode))
         ]
         apply_install_mode_defaults(args)
+        tui_step(tui, "2. Hermes target/runtime")
         home = Path(prompt_default("Hermes base path", str(home), tui)).expanduser()
         runtime = discover_hermes_runtime(
             base_home=home,
@@ -1450,8 +1687,15 @@ def wizard(
             runtime, skip_mnemosyne = prompt_missing_runtime_python(runtime, tui)
             args.skip_mnemosyne = skip_mnemosyne
         if args.profile is None:
-            profiles = parse_profiles(prompt_default("Target profile(s), comma-separated", "default", tui))
+            profiles = prompt_profiles(tui, home, profiles)
+        if args.install_mode != "soul-only" and not args.skip_config_env:
+            tui_step(tui, "3. Recommended provider setup")
+            prompt_hashmicro_provider_setup(args, tui, runtime_env)
+            hashmicro_choice = hashmicro_provider_choice_from_args(args)
+            if hashmicro_choice:
+                detected_providers = [hashmicro_choice, *detected_providers]
         if not args.skip_mnemosyne:
+            tui_step(tui, "4. Model routing")
             args.mnemosyne_mode = tui.select(
                 "Mnemosyne mode",
                 tuple(MNEMOSYNE_MODES),
@@ -1489,6 +1733,8 @@ def wizard(
                     "Mnemosyne embedding dimension", args.mnemosyne_embedding_dim, tui
                 )
         if not args.skip_config_env and not args.summary_model:
+            if args.skip_mnemosyne:
+                tui_step(tui, "4. Model routing")
             args.lcm_summary_model = select_model_from_detected_providers(
                 tui=tui,
                 providers=detected_providers,
@@ -1502,10 +1748,16 @@ def wizard(
                 current_model=args.lcm_expansion_model,
                 default_model=args.lcm_summary_model,
             )
+        if args.install_mode != "soul-only" and not args.skip_config_env:
+            tui_step(tui, "5. Stack components")
+        if args.install_mode != "soul-only":
+            tui_step(tui, "6. Skill packs and credentials")
         if args.install_mode != "soul-only" and not args.install_superpowers:
             args.install_superpowers = prompt_yes_no("Install Obra Superpowers skill pack?", False, tui)
         if args.install_mode != "soul-only" and not args.install_hmx_knowledge:
             args.install_hmx_knowledge = prompt_yes_no("Install HMX knowledge skill pack?", False, tui)
+        if args.install_mode != "soul-only" and args.install_hmx_knowledge:
+            prompt_hmx_gitlab_token_if_needed(args, tui, runtime_env)
         if args.install_mode != "soul-only" and not args.install_impeccable:
             args.install_impeccable = prompt_yes_no("Install Impeccable design skill?", False, tui)
         if args.install_mode != "soul-only" and not args.install_ponytail:
@@ -1555,6 +1807,15 @@ def wizard(
         install_impeccable=args.install_impeccable,
         install_ponytail=args.install_ponytail,
         hmx_knowledge_url=args.hmx_knowledge_url,
+        hmx_gitlab_token=args.hmx_gitlab_token,
+        setup_hashmicro_provider=args.setup_hashmicro_provider,
+        hashmicro_base_url=args.hashmicro_base_url,
+        hashmicro_provider_name=args.hashmicro_provider_name,
+        hashmicro_key_env=args.hashmicro_key_env,
+        hashmicro_api_key=getattr(args, "hashmicro_api_key", ""),
+        hashmicro_main_model=args.main_model,
+        hashmicro_delegation_model=args.delegation_model,
+        hashmicro_auxiliary_models=hashmicro_auxiliary_models_from_args(args),
         generate_soul=args.generate_soul,
         soul_agent_name=args.soul_agent_name,
         soul_user_name=args.soul_user_name,

@@ -40,7 +40,17 @@ Interactive mode starts with an install scope choice:
 | `Plugin & skill only` | Installs/updates plugin repos and selected skill packs, skips Mnemosyne package install and config/env merge, then offers SOUL.md generation. |
 | `Generate SOUL.md only` | Skips install/config work and only generates `SOUL.md` after plan approval. |
 
-Interactive mode is TUI-only (`Rich` + `prompt_toolkit`). `install.sh` bootstraps `PyYAML`, `Rich`, and `prompt_toolkit` into a temporary isolated installer venv, then launches the wizard with `HERMES_STACK_PYTHON` still pointing at the detected Hermes runtime Python. This keeps installer UI dependencies from upgrading or downgrading packages inside Hermes' own venv. `curl | bash` is supported; the installer reattaches prompts to `/dev/tty` when stdin is the curl pipe.
+Interactive mode is TUI-only (`Rich` + `prompt_toolkit`). The wizard uses selectable choices where possible, including a checkbox-style multi-select for target profiles so users do not need to type comma-separated profile names. `install.sh` bootstraps `PyYAML`, `Rich`, and `prompt_toolkit` into a cached isolated installer venv under `${HERMES_STACK_BOOTSTRAP_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/hermes-stack-bootstrap}`, then launches the wizard with `HERMES_STACK_PYTHON` still pointing at the detected Hermes runtime Python. This keeps installer UI dependencies from upgrading or downgrading packages inside Hermes' own venv. `curl | bash` is supported; the installer reattaches prompts to `/dev/tty` when stdin is the curl pipe.
+
+Cache controls:
+
+| Env var | Behavior |
+|---|---|
+| `HERMES_STACK_BOOTSTRAP_CACHE_DIR` | Override the installer-venv cache directory. |
+| `HERMES_STACK_RECREATE_BOOTSTRAP_VENV=1` | Delete/recreate the cached installer venv on this run. |
+| `HERMES_STACK_SKIP_BOOTSTRAP_DEPS=1` | Skip installer dependency bootstrap and run with the selected Python. |
+
+`--yes --dry-run` stays read-only and does not create the cached installer venv.
 
 ## What it changes
 
@@ -51,10 +61,11 @@ The installer makes a narrow, reviewable merge into the selected Hermes profile:
 - sets Mnemosyne as the memory provider
 - writes LCM/Mnemosyne defaults for the selected memory mode
 - seeds Telegram toolsets from CLI/top-level toolsets, or from all known toolsets when no CLI toolset exists, then appends `memory`
+- optionally configures a named `custom:xai-hashmicro` OpenAI-compatible provider and model routing
 - optionally installs selected skill packs
 - optionally generates `SOUL.md` through your configured Hermes backend
 
-It does **not** write tokens, provider keys, Telegram bot tokens, private keys, dashboard secrets, or embedding API credentials unless you explicitly provide them during the install run.
+It does **not** write tokens, provider keys, Telegram bot tokens, private keys, dashboard secrets, HMX GitLab tokens, HashMicro API keys, or embedding API credentials unless you explicitly provide them during the install run.
 
 Existing `config.yaml`, `.env`, and `SOUL.md` are backed up before non-dry-run writes. Hermes is not restarted automatically.
 
@@ -65,9 +76,10 @@ Existing `config.yaml`, `.env`, and `SOUL.md` are backed up before non-dry-run w
 | `hermes-lcm` | clones/updates plugin repo | upstream layout preserved |
 | `mnemosyne-memory` | installs package set into Hermes runtime Python | default mode: `hybrid` |
 | `hermes-progress-tail` | runs upstream release installer | pin with `--progress-tail-ref` |
-| `SOUL.md` | optional `hermes chat -q` generation | asks agent name, user name, communication style, and language; defaults keep lazy users moving |
+| HashMicro provider | merges named `custom:xai-hashmicro` provider config | prompted in full interactive mode; flag: `--setup-hashmicro-provider`; key is stored as `XAI_HASHMICRO_API_KEY` in `.env`, never in `config.yaml` |
+| `SOUL.md` | optional `hermes chat -q` generation | asks agent name, user name, communication style, and language; shows a loading status while the Hermes backend generates content; defaults keep lazy users moving |
 | `superpowers` | stages upstream `skills/*` as `superpowers-*` Hermes skills | prompted in TUI; flag: `--install-superpowers`; repo tooling is not copied into Hermes skills; older bad repo-root installs are moved aside under `backups/` |
-| HMX knowledge | stages discovered Hermes skill dirs | prompted in TUI; private repo; user must already have access; flag: `--install-hmx-knowledge`; tokens are never stored; older bad repo-root installs are moved aside under `backups/` |
+| HMX knowledge | stages `skills/*` from the private repo | prompted in TUI; flag: `--install-hmx-knowledge`; retries GitLab HTTPS with temporary `GIT_ASKPASS` when `GITLAB_TOKEN` is provided; token is stored in `.env` only when provided; older bad repo-root installs are moved aside under `backups/` |
 | `impeccable` | stages `plugin/skills/impeccable` only | prompted in TUI; flag: `--install-impeccable`; repo scaffolding/Claude config/package files are not copied into Hermes skills; older bad repo-root installs are moved aside under `backups/` |
 | `ponytail` | stages upstream `skills/*` only | prompted in TUI; recommended default: yes; flag: `--install-ponytail`; repo tooling/hooks are not copied into Hermes skills; older bad repo-root installs are moved aside under `backups/` |
 
@@ -158,8 +170,16 @@ bash install.sh --skip-progress-tail
 # optional skills
 bash install.sh --install-superpowers
 bash install.sh --install-hmx-knowledge
+GITLAB_TOKEN=glpat_xxx bash install.sh --install-hmx-knowledge
 bash install.sh --install-impeccable
 bash install.sh --install-ponytail
+
+# recommended HashMicro/xAI provider setup
+XAI_HASHMICRO_API_KEY=sk-xxx bash install.sh --yes \
+  --setup-hashmicro-provider \
+  --main-model gpt-5.5 \
+  --delegation-model gpt-5.5-medium \
+  --aux-all-model gpt-5.4-mini
 
 # pin progress-tail
 bash install.sh --progress-tail-ref v0.1.81
@@ -172,6 +192,49 @@ bash install.sh \
   --lcm-summary-model openrouter/google/gemini-2.5-flash \
   --lcm-expansion-model openrouter/anthropic/claude-sonnet-4
 ```
+
+## HashMicro provider setup
+
+Interactive full installs ask whether to configure the recommended OpenAI-compatible xAI HashMicro provider. If accepted, the wizard reads `XAI_HASHMICRO_API_KEY` from the environment or prompts for it hidden, fetches live model IDs from `/v1/models` when possible, then asks for:
+
+- main Hermes model
+- `delegate_task` model
+- default auxiliary model
+- optional per-auxiliary-task overrides
+
+The merge writes a named provider and routes through it:
+
+```yaml
+custom_providers:
+  - name: xai-hashmicro
+    base_url: https://xai.hashmicro.co/v1
+    key_env: XAI_HASHMICRO_API_KEY
+    api_mode: chat_completions
+    discover_models: true
+
+model:
+  provider: custom:xai-hashmicro
+  default: gpt-5.5
+
+delegation:
+  provider: custom:xai-hashmicro
+  model: gpt-5.5-medium
+```
+
+Auxiliary routes use the same named provider and clear stale direct `base_url` / `api_key` values so secrets stay centralized in `.env`.
+
+Non-interactive example:
+
+```bash
+XAI_HASHMICRO_API_KEY=sk-xxx bash install.sh --yes \
+  --setup-hashmicro-provider \
+  --main-model gpt-5.5 \
+  --delegation-model gpt-5.5-medium \
+  --aux-all-model gpt-5.4-mini \
+  --aux-model compression=gpt-5.5-medium
+```
+
+Supported flags: `--hashmicro-base-url`, `--hashmicro-provider-name`, `--hashmicro-key-env`, `--main-model`, `--delegation-model`, `--aux-all-model`, and repeated `--aux-model task=model`.
 
 ## Mnemosyne modes
 
@@ -208,6 +271,20 @@ MNEMOSYNE_EMBEDDING_DIM=1536 \
 ```
 
 The dry-run preview redacts `MNEMOSYNE_EMBEDDING_API_KEY`. When switching modes, bootstrapper-managed stale keys are removed; unrelated user keys are preserved.
+
+## HMX GitLab access and secret handling
+
+HMX knowledge staging copies only real Hermes skill directories from the repo's `skills/` directory. Top-level repo files such as `README.md`, `tools/`, `.git`, package metadata, and CI files are not installed as Hermes skills. Per-skill support files under `references/`, `scripts/`, `templates/`, `assets/`, and known upstream sidecar folders are preserved.
+
+For private GitLab access, the installer tries the configured repo URL first. If clone fails and `GITLAB_TOKEN` is available, it retries HTTPS with a temporary `GIT_ASKPASS` script. The token is **not** put into the clone URL or command arguments, and the temporary askpass file is deleted after the attempt.
+
+Use env for non-interactive runs:
+
+```bash
+GITLAB_TOKEN=glpat_xxx bash install.sh --yes --install-hmx-knowledge
+```
+
+Interactive runs prompt for the token hidden when HMX is selected and no `GITLAB_TOKEN` exists in the environment. Provided tokens are written to the target profile `.env` so future reruns can reuse them. Dry-run output redacts `GITLAB_TOKEN`, `XAI_HASHMICRO_API_KEY`, `MNEMOSYNE_EMBEDDING_API_KEY`, and other obvious secret keys.
 
 ## SOUL.md generation
 

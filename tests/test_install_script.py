@@ -86,6 +86,7 @@ class InstallScriptTests(unittest.TestCase):
                 "#!/bin/sh\n"
                 f"RUNTIME_LOG={str(runtime_log)!r}\n"
                 f"BOOTSTRAP_LOG={str(bootstrap_log)!r}\n"
+                "if [ \"$1\" = \"-c\" ]; then echo deps-fingerprint; exit 0; fi\n"
                 "printf '%s\\n' \"runtime:$*\" >> \"$RUNTIME_LOG\"\n"
                 "if [ \"$1\" = \"-m\" ] && [ \"$2\" = \"pip\" ]; then echo 'runtime pip must not run' >&2; exit 88; fi\n"
                 "if [ \"$1\" = \"-m\" ] && [ \"$2\" = \"venv\" ]; then\n"
@@ -157,6 +158,7 @@ class InstallScriptTests(unittest.TestCase):
             fake_python.write_text(
                 "#!/bin/sh\n"
                 f"LOG={str(log_path)!r}\n"
+                "if [ \"$1\" = \"-c\" ]; then echo deps-fingerprint; exit 0; fi\n"
                 "if [ \"$1\" = \"-m\" ] && [ \"$2\" = \"venv\" ]; then\n"
                 "  venv_dir=\"$3\"\n"
                 "  mkdir -p \"$venv_dir/bin\"\n"
