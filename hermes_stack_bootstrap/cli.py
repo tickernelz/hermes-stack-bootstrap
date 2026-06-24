@@ -112,7 +112,21 @@ def apply_plans(plans, ui=None) -> None:
 
 def wizard(argv: Iterable[str] | None = None, *, env=None, ui=None):
     _sync_wizard_compat_globals()
-    return _wizard.wizard(argv, env=env, ui=ui)
+    # Wizard v2 is the default interactive flow ONLY when called without
+    # explicit argv (i.e., user ran the command without any CLI flags).
+    # When argv is explicitly provided (even empty list), use legacy wizard
+    # for backward compatibility with existing tests and noninteractive CLI usage.
+    if argv is not None:
+        return _wizard.wizard(argv, env=env, ui=ui)
+    
+    # No explicit argv: check sys.argv for CLI flags
+    cli_argv = sys.argv[1:]
+    has_flags = any(arg.startswith('-') for arg in cli_argv)
+    
+    if has_flags:
+        return _wizard.wizard(cli_argv, env=env, ui=ui)
+    from .wizard_v2_flow import run_wizard_v2
+    return run_wizard_v2(env=env, ui=ui)
 
 
 def main(argv: Iterable[str] | None = None) -> int:
