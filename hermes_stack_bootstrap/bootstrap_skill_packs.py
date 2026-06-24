@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .bootstrap_commands import run_command
+from .bootstrap_utils import retry_with_backoff
 from .bootstrap_shell import shell_quote
 from .bootstrap_data import (
     HMX_KNOWLEDGE_SKILL_PACK,
@@ -240,7 +241,11 @@ def clone_skill_pack_repo(spec: SkillPackSpec, source_root: Path, *, dry_run: bo
         run_command(command, dry_run=True)
         return
     try:
-        run_command(command, dry_run=False, timeout=600)
+        retry_with_backoff(
+            lambda: run_command(command, dry_run=False, timeout=600),
+            label=f"git clone ({spec.name})",
+            retryable_exceptions=(ConnectionError, TimeoutError, subprocess.TimeoutExpired),
+        )
         return
     except subprocess.CalledProcessError:
         if not gitlab_token or "gitlab.com" not in spec.repo_url:
@@ -251,11 +256,14 @@ def clone_skill_pack_repo(spec: SkillPackSpec, source_root: Path, *, dry_run: bo
             "GIT_ASKPASS": str(askpass),
             "GIT_TERMINAL_PROMPT": "0",
         }
-        run_command(
-            ["git", "clone", "--depth=1", gitlab_https_url(spec.repo_url), str(source_root)],
-            dry_run=False,
-            env=retry_env,
-            timeout=600,
+        retry_with_backoff(
+            lambda: run_command(
+                ["git", "clone", "--depth=1", gitlab_https_url(spec.repo_url), str(source_root)],
+                dry_run=False,
+                env=retry_env,
+                timeout=600,
+            ),
+            label=f"git clone ({spec.name}, HTTPS fallback)",
         )
     finally:
         askpass.unlink(missing_ok=True)

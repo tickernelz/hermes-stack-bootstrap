@@ -31,7 +31,7 @@ from .bootstrap_shell import render_command
 from .bootstrap_skill_packs import install_optional_skills
 from .bootstrap_state import save_options_state, state_path_for
 from .bootstrap_tui import RichPromptTui
-from .bootstrap_utils import atomic_write_text
+from .bootstrap_utils import atomic_write_text, retry_with_backoff
 from .config_merge import build_target_config, read_config, write_config
 from .env_template import build_env_values, managed_env_keys, merge_env_text, render_env_block
 from .provider_setup import build_hashmicro_env_values, merge_hashmicro_provider_config, secret_env_keys
@@ -54,10 +54,18 @@ def install_lcm(plan: InstallPlan) -> None:
         return
     lcm_dir = plan.target_home / "plugins" / "hermes-lcm"
     if lcm_dir.exists():
-        run_command(["git", "-C", str(lcm_dir), "pull", "--ff-only"], dry_run=plan.options.dry_run, timeout=600)
+        retry_with_backoff(
+            lambda: run_command(
+                ["git", "-C", str(lcm_dir), "pull", "--ff-only"], dry_run=plan.options.dry_run, timeout=600
+            ),
+            label="git pull (hermes-lcm)",
+        )
     else:
         lcm_dir.parent.mkdir(parents=True, exist_ok=True)
-        run_command(["git", "clone", LCM_REPO, str(lcm_dir)], dry_run=plan.options.dry_run, timeout=600)
+        retry_with_backoff(
+            lambda: run_command(["git", "clone", LCM_REPO, str(lcm_dir)], dry_run=plan.options.dry_run, timeout=600),
+            label="git clone (hermes-lcm)",
+        )
 
 
 def mnemosyne_packages_satisfied(hermes_python: Path, packages: Sequence[str]) -> bool:
