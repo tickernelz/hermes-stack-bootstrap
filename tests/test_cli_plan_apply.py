@@ -309,7 +309,6 @@ class CliPlanTestsPart2(unittest.TestCase):
             online_commands,
         )
 
-
     def test_validate_runtime_options_requires_python_when_mnemosyne_needed(self):
         options = InstallerOptions(
             base_home=Path("/tmp/hermes"),
@@ -334,11 +333,6 @@ class CliPlanTestsPart2(unittest.TestCase):
         )
 
         validate_runtime_options(options)
-
-
-
-
-
 
     def test_merge_config_and_env_applies_hashmicro_provider_without_leaking_secret_to_config(self):
         with tempfile.TemporaryDirectory() as tmp:

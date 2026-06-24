@@ -222,8 +222,6 @@ class CliPlanTestsPart4(unittest.TestCase):
 
         self.assertEqual(install_pack.call_args.kwargs["gitlab_token"], "glpat-secret")
 
-
-
     def test_apply_plan_soul_only_prompts_identity_after_plan_approval(self):
         with tempfile.TemporaryDirectory() as tmp:
             options = InstallerOptions(
@@ -265,8 +263,6 @@ class CliPlanTestsPart4(unittest.TestCase):
         self.assertIn("Language", text_prompts)
         self.assertNotIn("Agent role", text_prompts)
         self.assertNotIn("Behavior / personality", text_prompts)
-
-
 
     def test_build_plan_includes_soul_generation_step(self):
         options = InstallerOptions(

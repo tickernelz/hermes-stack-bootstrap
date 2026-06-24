@@ -118,12 +118,12 @@ def profile_list(base_dir: Path | None = None) -> dict[str, Path]:
         paths = [*directory.glob("*.yaml"), *directory.glob("*.yml")]
     except OSError:
         return profiles
-    
+
     for path in paths:
         if path.is_file():
             name = path.stem
             profiles[name] = path
-    
+
     return profiles
 
 
@@ -271,7 +271,9 @@ def profile_from_options(options: InstallerOptions) -> WizardProfile:
             install_soul=bool(options.generate_soul),
         ),
         skills=SkillChoices(packs=packs, conflict_policy="ask"),
-        verification=VerificationChoices(run_smoke=not options.skip_verify, create_soul="yes" if options.generate_soul else "ask"),
+        verification=VerificationChoices(
+            run_smoke=not options.skip_verify, create_soul="yes" if options.generate_soul else "ask"
+        ),
     )
 
 
@@ -282,15 +284,27 @@ def apply_profile_defaults(args: Any, profile: WizardProfile, explicit_flags: se
     _set_default(args, "home", profile.hermes_home, explicit, "--home", "--hermes-home")
     _set_default(args, "profile", [profile.profile], explicit, "--profile")
     if profile.provider.provider_name or profile.provider.base_url:
-        _set_default(args, "setup_hashmicro_provider", profile.provider.kind == "hashmicro", explicit, "--setup-hashmicro-provider")
-        _set_default(args, "hashmicro_provider_name", profile.provider.provider_name, explicit, "--hashmicro-provider-name")
+        _set_default(
+            args,
+            "setup_hashmicro_provider",
+            profile.provider.kind == "hashmicro",
+            explicit,
+            "--setup-hashmicro-provider",
+        )
+        _set_default(
+            args, "hashmicro_provider_name", profile.provider.provider_name, explicit, "--hashmicro-provider-name"
+        )
         _set_default(args, "hashmicro_base_url", profile.provider.base_url, explicit, "--hashmicro-base-url")
         _set_default(args, "hashmicro_key_env", profile.provider.key_env, explicit, "--hashmicro-key-env")
     _set_default(args, "main_model", profile.models.main, explicit, "--main-model")
     _set_default(args, "delegation_model", profile.models.delegation, explicit, "--delegation-model")
     _set_default(args, "main_context_length", str(profile.models.context or ""), explicit, "--main-context-length")
     _set_default(
-        args, "delegation_context_length", str(profile.models.delegation_context or ""), explicit, "--delegation-context-length"
+        args,
+        "delegation_context_length",
+        str(profile.models.delegation_context or ""),
+        explicit,
+        "--delegation-context-length",
     )
     if profile.models.aux_default:
         _set_default(args, "aux_all_model", profile.models.aux_default, explicit, "--aux-all-model")
@@ -321,7 +335,11 @@ def prompt_load_profile(tui: Any, base_dir: Path | None = None) -> tuple[str, Wi
     names = list_profiles(base_dir)
     if not names:
         return "fresh", None
-    labels = ["Start fresh using recommended defaults", *[f"Load saved choices: {name}" for name in names], "Import choices from file..."]
+    labels = [
+        "Start fresh using recommended defaults",
+        *[f"Load saved choices: {name}" for name in names],
+        "Import choices from file...",
+    ]
     selected = tui.select("Choices source", tuple(labels), labels[1] if "default" in names else labels[0])
     if selected == labels[0]:
         return "fresh", None
@@ -332,7 +350,9 @@ def prompt_load_profile(tui: Any, base_dir: Path | None = None) -> tuple[str, Wi
     return name, load_profile(name, base_dir)
 
 
-def prompt_save_profile(tui: Any, profile: WizardProfile, loaded_name: str | None = None, base_dir: Path | None = None) -> Path | None:
+def prompt_save_profile(
+    tui: Any, profile: WizardProfile, loaded_name: str | None = None, base_dir: Path | None = None
+) -> Path | None:
     default_name = loaded_name or "default"
     labels = [f"Save non-secret choices as profile: {default_name}", "Save as new profile...", "Do not save choices"]
     selected = tui.select("Save choices", tuple(labels), labels[0])

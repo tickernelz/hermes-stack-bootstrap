@@ -127,7 +127,9 @@ def test_full_install_dry_run_all_components_reports_actions_and_redacts_secrets
         (hermes_home / ".env").write_text("EXISTING=1\n", encoding="utf-8")
 
         # Skip Mnemosyne since no Hermes Python available in test env
-        result = run_installer(hermes_home, "--dry-run", "--skip-mnemosyne", "--install-superpowers", "--install-ponytail")
+        result = run_installer(
+            hermes_home, "--dry-run", "--skip-mnemosyne", "--install-superpowers", "--install-ponytail"
+        )
 
         assert_success(result)
         assert "Dry run        : True" in result.stdout

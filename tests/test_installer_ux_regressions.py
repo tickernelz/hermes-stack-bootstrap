@@ -22,8 +22,6 @@ class InstallerUxRegressionTests(unittest.TestCase):
 
         self.assertEqual(tui.events, [("select", "Install Ponytail?", ("Yes", "No"), "No")])
 
-
-
     def test_existing_direct_skill_install_is_replaced_by_vendor_copy(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

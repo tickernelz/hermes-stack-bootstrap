@@ -164,7 +164,13 @@ def install_mnemosyne(plan: InstallPlan) -> None:
             run_command(["sudo", "-v"], dry_run=False)
             run_command(sudo_command, dry_run=False, timeout=600)
         else:
-            run_command(pip_command, dry_run=False, timeout=600, show_spinner=True, spinner_message="Installing Mnemosyne packages")
+            run_command(
+                pip_command,
+                dry_run=False,
+                timeout=600,
+                show_spinner=True,
+                spinner_message="Installing Mnemosyne packages",
+            )
     run_command(
         [str(hermes_py), "-m", "mnemosyne.install"],
         dry_run=plan.options.dry_run,

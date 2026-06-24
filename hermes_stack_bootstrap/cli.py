@@ -31,7 +31,7 @@ from .hermes_discovery import discover_hermes_runtime
 from .hermes_models import provider_choices
 from .provider_setup import fetch_openai_compatible_model_metadata
 from .soul_generator import generate_soul_with_hermes
-from .wizard_flow import quick_install, run_wizard_v2 as run_wizard
+from .wizard_flow import cli_help, quick_install, run_wizard_v2 as run_wizard
 from .wizard_state import profile_delete, profile_list, profile_show
 from .wizard_tui import RichWizardTui as RichPromptTui
 from .wizard_tui import TuiDependencyError, create_tui
@@ -106,20 +106,19 @@ def apply_plans(plans, ui=None) -> None:
     return _apply_apply_plans(plans, ui)
 
 
-def wizard(argv: Iterable[str] | None = None, *, env=None, ui=None):
+def wizard(argv: Iterable[str] | None = None, *, env=None, ui=None, execute: bool = False):
     _sync_wizard_compat_globals()
 
     argv_list = sys.argv[1:] if argv is None else list(argv)
     if "--quick" in argv_list:
         return quick_install(env=env, ui=ui)
 
-    # execute=False: wizard only returns options, main() handles build_plans/apply_plans
-    return run_wizard(env=env, ui=ui, argv=argv_list, execute=False)
+    return run_wizard(env=env, ui=ui, argv=argv_list, execute=execute)
 
 
 def main(argv: Iterable[str] | None = None) -> int:
     """Main entry point for hermes-stack-bootstrap CLI.
-    
+
     Supports three modes:
     - Profile management: --profile list|delete|show [name]
     - Quick install: --quick (no wizard, use defaults)
@@ -127,12 +126,16 @@ def main(argv: Iterable[str] | None = None) -> int:
     """
     # Parse profile management commands
     args = list(argv) if argv is not None else sys.argv[1:]
-    
+
+    if any(arg in {"--help", "-h"} for arg in args):
+        print(cli_help(args), end="")
+        return 0
+
     if args and args[0] == "--profile" and len(args) > 1 and args[1] in {"list", "delete", "show"}:
         if len(args) < 2:
             print("Usage: hermes-stack-bootstrap --profile <list|delete|show> [name]", file=sys.stderr)
             return 1
-        
+
         cmd = args[1]
         if cmd == "list":
             profiles = profile_list()
@@ -173,11 +176,14 @@ def main(argv: Iterable[str] | None = None) -> int:
             print(f"Unknown profile command: {cmd}", file=sys.stderr)
             print("Available commands: list, delete, show", file=sys.stderr)
             return 1
-    
+
     try:
-        options = wizard(argv)
-        plans = build_plans(options)
-        apply_plans(plans)
+        if "--quick" in args:
+            options = wizard(args, execute=False)
+            plans = build_plans(options)
+            apply_plans(plans)
+        else:
+            wizard(args, execute=True)
     except subprocess.CalledProcessError as exc:
         print(f"Command failed with exit code {exc.returncode}: {exc.cmd}", file=sys.stderr)
         return exc.returncode or 1

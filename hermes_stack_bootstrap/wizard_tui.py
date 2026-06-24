@@ -37,7 +37,9 @@ class WizardTui(Protocol):
     def info(self, message: str) -> None: ...
     def warning(self, message: str) -> None: ...
     def select(self, prompt: str, choices: Sequence[Any], default: Any | None = None) -> Any: ...
-    def multi_select(self, prompt: str, choices: Sequence[Any], defaults: Sequence[Any] | None = None) -> tuple[Any, ...]: ...
+    def multi_select(
+        self, prompt: str, choices: Sequence[Any], defaults: Sequence[Any] | None = None
+    ) -> tuple[Any, ...]: ...
     def confirm(self, prompt: str, default: bool = True) -> bool: ...
     def text(self, prompt: str, default: str | None = None, validate: Callable[[str], Any] | None = None) -> str: ...
     def password(self, prompt: str, env_name: str | None = None) -> str: ...
@@ -83,6 +85,102 @@ def _default_choice(choices: Sequence[Choice], default: Any | None) -> Choice | 
     return enabled[0]
 
 
+class ConsoleWizardTui:
+    """No-dependency fallback TUI for non-rich environments."""
+
+    def step(self, index: int, total: int, title: str, subtitle: str | None = None) -> None:
+        print(f"\nHermes Stack Bootstrap Wizard\nStep {index}/{total}: {title}")
+        if subtitle:
+            print(subtitle)
+
+    def info(self, message: str) -> None:
+        print(message)
+
+    def warning(self, message: str) -> None:
+        print(f"Warning: {message}")
+
+    def select(self, prompt: str, choices: Sequence[Any], default: Any | None = None) -> Any:
+        choice_items = [choice for choice in _choices(choices) if not choice.disabled]
+        default_choice = _default_choice(choice_items, default)
+        if default_choice is None:
+            raise ValueError("select requires at least one enabled choice")
+        print(prompt)
+        for i, choice in enumerate(choice_items, 1):
+            mark = "*" if _same_value(choice.resolved_value(), default_choice.resolved_value()) else " "
+            desc = f" — {choice.description}" if choice.description else ""
+            print(f"  {i}. {mark} {choice.label}{desc}")
+        ans = input(f"Select [{default_choice.label}]: ").strip()
+        if not ans:
+            return default_choice.resolved_value()
+        if ans.isdigit() and 1 <= int(ans) <= len(choice_items):
+            return choice_items[int(ans) - 1].resolved_value()
+        for choice in choice_items:
+            if ans.lower() in {choice.label.lower(), str(choice.resolved_value()).lower()}:
+                return choice.resolved_value()
+        return default_choice.resolved_value()
+
+    def multi_select(
+        self, prompt: str, choices: Sequence[Any], defaults: Sequence[Any] | None = None
+    ) -> tuple[Any, ...]:
+        choice_items = [choice for choice in _choices(choices) if not choice.disabled]
+        defaults = tuple(defaults or ())
+        default_values = [
+            choice.resolved_value()
+            for choice in choice_items
+            if any(
+                _same_value(choice.resolved_value(), default) or _same_value(choice.label, default)
+                for default in defaults
+            )
+        ]
+        print(prompt + " (comma numbers; Enter keeps defaults)")
+        for i, choice in enumerate(choice_items, 1):
+            mark = "*" if choice.resolved_value() in default_values else " "
+            desc = f" — {choice.description}" if choice.description else ""
+            print(f"  {i}. {mark} {choice.label}{desc}")
+        ans = input("Select: ").strip()
+        if not ans:
+            return tuple(default_values)
+        out = []
+        for part in ans.split(","):
+            part = part.strip()
+            if part.isdigit() and 1 <= int(part) <= len(choice_items):
+                out.append(choice_items[int(part) - 1].resolved_value())
+        return tuple(out or default_values)
+
+    def confirm(self, prompt: str, default: bool = True) -> bool:
+        ans = input(f"{prompt} [{'Y/n' if default else 'y/N'}]: ").strip().lower()
+        return default if not ans else ans.startswith("y")
+
+    def text(self, prompt: str, default: str | None = None, validate: Callable[[str], Any] | None = None) -> str:
+        while True:
+            value = input(f"{prompt} [{default or ''}]: ").strip() or (default or "")
+            if validate is None:
+                return value
+            verdict = validate(value)
+            if verdict in (True, None):
+                return value
+            self.warning(str(verdict))
+
+    def password(self, prompt: str, env_name: str | None = None) -> str:
+        import getpass
+
+        return getpass.getpass(f"{prompt}{f' ({env_name})' if env_name else ''}: ").strip()
+
+    def summary_table(self, title: str, rows: Sequence[Any]) -> None:
+        print(f"\n{title}")
+        for row in rows:
+            key, value = row[:2]
+            print(f"  {key}: {value}")
+
+    def progress(self, label: str, current: int, total: int) -> None:
+        print(f"[{current}/{total}] {label}")
+
+    @contextmanager
+    def spinner(self, label: str):
+        print(label)
+        yield
+
+
 class RichWizardTui:
     """Rich/prompt_toolkit implementation of the wizard v2 primitives."""
 
@@ -126,7 +224,9 @@ class RichWizardTui:
         if default_choice is None:
             raise ValueError("select requires at least one enabled choice")
         self._print_choices(prompt, choice_items, default_choice.resolved_value())
-        values = [(choice.resolved_value(), self._choice_text(choice)) for choice in choice_items if not choice.disabled]
+        values = [
+            (choice.resolved_value(), self._choice_text(choice)) for choice in choice_items if not choice.disabled
+        ]
         result = self._radiolist_dialog(
             title=prompt,
             text="Use arrows to move, Enter to choose.",
@@ -146,7 +246,10 @@ class RichWizardTui:
         default_values = [
             choice.resolved_value()
             for choice in enabled
-            if any(_same_value(choice.resolved_value(), default) or _same_value(choice.label, default) for default in defaults)
+            if any(
+                _same_value(choice.resolved_value(), default) or _same_value(choice.label, default)
+                for default in defaults
+            )
         ]
         self._print_choices(prompt, choice_items, None)
         result = self._checkboxlist_dialog(
@@ -324,11 +427,22 @@ class FakeWizardTui:
 
 
 def create_tui(fake: bool = False, **answers: Iterable[Any]) -> WizardTui:
-    """Create a wizard v2 TUI; ``fake=True`` returns ``FakeWizardTui`` for tests."""
+    """Create a wizard TUI; ``fake=True`` returns ``FakeWizardTui`` for tests."""
 
     if fake:
         return FakeWizardTui(**answers)
-    return RichWizardTui()
+    try:
+        return RichWizardTui()
+    except TuiDependencyError:
+        return ConsoleWizardTui()
 
 
-__all__ = ["Choice", "FakeWizardTui", "RichWizardTui", "TuiDependencyError", "WizardTui", "create_tui"]
+__all__ = [
+    "Choice",
+    "ConsoleWizardTui",
+    "FakeWizardTui",
+    "RichWizardTui",
+    "TuiDependencyError",
+    "WizardTui",
+    "create_tui",
+]

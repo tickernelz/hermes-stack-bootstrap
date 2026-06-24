@@ -52,13 +52,6 @@ class CliPlanTestsPart1(unittest.TestCase):
             Path("/srv/hermes"),
         )
 
-
-
-
-
-
-
-
     def test_plugin_skill_only_plan_skips_config_env_and_mnemosyne_verify(self):
         options = InstallerOptions(
             base_home=Path("/tmp/hermes"),
@@ -230,7 +223,6 @@ class CliPlanTestsPart1(unittest.TestCase):
 
             self.assertIn(("status_stop", "Generating SOUL.md with Hermes AI backend..."), tui.events)
             self.assertEqual((Path(tmp) / "SOUL.md").read_text(encoding="utf-8"), valid_soul + "\n")
-
 
     def test_progress_tail_ref_defaults_to_latest_release(self):
         self.assertEqual(PROGRESS_TAIL_REF, "latest")
