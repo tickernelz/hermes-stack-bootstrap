@@ -147,6 +147,8 @@ If an installed skill already has the same `name:` manifest as an incoming optio
 
 If an optional skill pack fails to clone/install, warn and continue with the remaining optional packs. A GitLab token rate limit must not abort unrelated skill installs or the rest of the bootstrap.
 
+Resolve `hermes-progress-tail` `latest` from git tags (`git ls-remote --tags --refs`) rather than GitHub REST `releases/latest`; unauthenticated REST rate limits can abort installs after Mnemosyne has already changed files. If tag resolution fails, fall back to `main` with a warning instead of cancelling the whole bootstrap.
+
 ## SOUL.md generation rules
 
 SOUL generation should go through the user's configured Hermes backend.

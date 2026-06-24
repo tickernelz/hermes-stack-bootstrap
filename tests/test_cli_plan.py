@@ -2,6 +2,7 @@ import io
 import subprocess
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -26,6 +27,7 @@ from hermes_stack_bootstrap.cli import (
     mnemosyne_runtime_needs_sudo,
     parse_profiles,
     print_plan,
+    resolve_progress_tail_ref,
     main,
     stage_skill_pack,
     validate_runtime_options,
@@ -451,6 +453,29 @@ class CliPlanTestsPart1(unittest.TestCase):
 
     def test_progress_tail_ref_defaults_to_latest_release(self):
         self.assertEqual(PROGRESS_TAIL_REF, "latest")
+
+    def test_progress_tail_latest_resolves_from_git_tags_not_github_api(self):
+        completed = SimpleNamespace(stdout=("abc\trefs/tags/v0.1.91\ndef\trefs/tags/v0.1.93\nghi\trefs/tags/v0.1.92\n"))
+        api_error = urllib.error.HTTPError(
+            "https://api.github.com/repos/tickernelz/hermes-progress-tail/releases/latest",
+            403,
+            "rate limit exceeded",
+            hdrs=None,
+            fp=None,
+        )
+
+        with (
+            patch("subprocess.run", return_value=completed) as run,
+            patch("urllib.request.urlopen", side_effect=api_error) as urlopen,
+        ):
+            self.assertEqual(resolve_progress_tail_ref("latest"), "v0.1.93")
+
+        run.assert_called_once()
+        urlopen.assert_not_called()
+
+    def test_progress_tail_latest_falls_back_to_main_when_tag_resolution_fails(self):
+        with patch("subprocess.run", side_effect=subprocess.CalledProcessError(128, ["git", "ls-remote"])):
+            self.assertEqual(resolve_progress_tail_ref("latest"), "main")
 
     def test_main_reports_tui_dependency_errors_without_traceback(self):
         buffer = io.StringIO()

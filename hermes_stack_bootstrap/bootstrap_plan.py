@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
-import json
-import urllib.request
+import re
+import subprocess
 from pathlib import Path
 
 from .bootstrap_data import (
@@ -35,17 +35,37 @@ def progress_tail_install_url(ref: str) -> str:
     return f"https://raw.githubusercontent.com/{PROGRESS_TAIL_REPO}/{ref}/install.sh"
 
 
+def progress_tail_semver_key(tag: str) -> tuple[int, int, int]:
+    match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", tag.strip())
+    if not match:
+        return (-1, -1, -1)
+    return tuple(int(part) for part in match.groups())
+
+
 def resolve_progress_tail_ref(ref: str) -> str:
     if ref != "latest":
         return ref
-    url = f"https://api.github.com/repos/{PROGRESS_TAIL_REPO}/releases/latest"
-    request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json"})
-    with urllib.request.urlopen(request, timeout=15) as response:  # noqa: S310 - fixed GitHub API URL
-        data = json.loads(response.read().decode("utf-8"))
-    tag_name = data.get("tag_name")
-    if not isinstance(tag_name, str) or not tag_name:
-        raise RuntimeError(f"Could not resolve latest release tag for {PROGRESS_TAIL_REPO}")
-    return tag_name
+    command = [
+        "git",
+        "ls-remote",
+        "--tags",
+        "--refs",
+        f"https://github.com/{PROGRESS_TAIL_REPO}.git",
+        "v*",
+    ]
+    try:
+        completed = subprocess.run(command, check=True, capture_output=True, text=True, timeout=30)
+        tags = []
+        for line in completed.stdout.splitlines():
+            _sha, _, ref_name = line.partition("\t")
+            tag = ref_name.removeprefix("refs/tags/")
+            if progress_tail_semver_key(tag) != (-1, -1, -1):
+                tags.append(tag)
+        if tags:
+            return max(tags, key=progress_tail_semver_key)
+    except Exception as exc:
+        print(f"Warning: could not resolve hermes-progress-tail latest tag via git ({exc}); using main.")
+    return "main"
 
 
 def progress_tail_install_command(*, base_home: Path, profile: str, ref: str) -> str:
