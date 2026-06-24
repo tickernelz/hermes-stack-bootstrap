@@ -61,7 +61,10 @@ def tui_status(ui: RichPromptTui | None, message: str) -> Iterator[None]:
 
 
 def prompt_yes_no(prompt: str, default: bool = False, ui: RichPromptTui | None = None) -> bool:
-    return require_tui(ui).confirm(prompt, default)
+    answer = require_tui(ui).select(prompt, ("Yes", "No"), "Yes" if default else "No")
+    if isinstance(answer, bool):
+        return answer
+    return str(answer).strip().lower() in {"yes", "y", "true", "1"}
 
 
 def prompt_missing_runtime_python(
@@ -84,7 +87,7 @@ def prompt_missing_runtime_python(
         candidate = Path(answer).expanduser()
         if candidate.is_file() and os.access(candidate, os.X_OK):
             return dataclasses.replace(runtime, hermes_python=candidate, hermes_python_source="manual prompt"), False
-        if tui.confirm(f"Not executable: {candidate}. Skip Mnemosyne instead?", True):
+        if prompt_yes_no(f"Not executable: {candidate}. Skip Mnemosyne instead?", True, tui):
             return runtime, True
 
 

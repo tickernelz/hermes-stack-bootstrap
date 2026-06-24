@@ -184,8 +184,6 @@ def default_hashmicro_context_length(model: str) -> int:
     if "gpt-5.4" in normalized:
         return 200_000
     if "gpt-5.5" in normalized:
-        if any(normalized.endswith(f"-{effort}") for effort in ("medium", "high", "xhigh")):
-            return 400_000
         return 272_000
     return 0
 

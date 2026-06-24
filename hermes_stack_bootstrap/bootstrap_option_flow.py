@@ -110,12 +110,11 @@ def hashmicro_auxiliary_context_lengths_from_args(
 
 
 def _context_default_for_model(model: str, detected_contexts: Mapping[str, int] | None = None) -> int:
-    # User-confirmed correction: GPT-5.5 Codex variants are 272K even if a
-    # live endpoint reports a larger generic context value.
-    normalized = str(model or "").lower().replace("-", " ").replace("/", " ")
-    if "gpt 5.5" in normalized and "codex" in normalized:
+    model_name = str(model or "").strip()
+    normalized = model_name.lower()
+    if "gpt-5.5" in normalized:
         return 272000
-    return int((detected_contexts or {}).get(model) or default_hashmicro_context_length(model))
+    return int((detected_contexts or {}).get(model_name) or default_hashmicro_context_length(model_name))
 
 
 def _hashmicro_effective_model(model: str, effort: str, available_models: Iterable[str] | None = None) -> str:

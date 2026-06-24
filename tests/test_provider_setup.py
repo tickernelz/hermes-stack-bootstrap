@@ -141,8 +141,8 @@ class ProviderSetupTests(unittest.TestCase):
 
     def test_hashmicro_context_defaults_cover_model_families_and_reasoning_suffixes(self):
         self.assertEqual(default_hashmicro_context_length("gpt-5.5"), 272000)
-        self.assertEqual(default_hashmicro_context_length("gpt-5.5-xhigh"), 400000)
-        self.assertEqual(default_hashmicro_context_length("gpt-5.5-reasoning-xhigh"), 400000)
+        self.assertEqual(default_hashmicro_context_length("gpt-5.5-xhigh"), 272000)
+        self.assertEqual(default_hashmicro_context_length("gpt-5.5-reasoning-xhigh"), 272000)
         self.assertEqual(default_hashmicro_context_length("gpt-5.5-codex"), 272000)
         self.assertEqual(default_hashmicro_context_length("codex/gpt-5.5-xhigh"), 272000)
         self.assertEqual(default_hashmicro_context_length("gpt-5.4"), 200000)

@@ -90,6 +90,23 @@ def move_aside_repo_root_skill_install(dest: Path, spec: SkillPackSpec) -> Path:
     return backup
 
 
+def existing_direct_skill_path(dest: Path, skill_name: str) -> Path | None:
+    if dest.parent.name != "vendor" or dest.parent.parent.name != "skills":
+        return None
+    candidate = dest.parent.parent / skill_name
+    return candidate if candidate.exists() else None
+
+
+def replace_existing_direct_skill_install(dest: Path, skill_name: str, spec: SkillPackSpec) -> None:
+    direct = existing_direct_skill_path(dest, skill_name)
+    if direct is None:
+        return
+    backup = skill_pack_backup_path(direct, spec)
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(direct), str(backup))
+    print(f"Moved existing {skill_name} skill aside before installing updated {spec.name}: {backup}")
+
+
 def staged_skill_dir_name(skill_dir: Path, spec: SkillPackSpec) -> str:
     name = skill_dir.name
     if spec.skill_name_prefix and not name.startswith(spec.skill_name_prefix):
@@ -150,6 +167,7 @@ def stage_skill_pack(source_root: Path, dest: Path, spec: SkillPackSpec) -> None
     for skill_dir in skill_dirs:
         target_name = staged_skill_dir_name(skill_dir, spec)
         target = dest / target_name
+        replace_existing_direct_skill_install(dest, target_name, spec)
         shutil.copytree(skill_dir, target, dirs_exist_ok=True)
         rewrite_staged_skill_manifest(target / "SKILL.md", target_name, spec)
         rewrite_staged_skill_support_files(target, spec)
@@ -234,6 +252,13 @@ def optional_skill_packs(options: InstallerOptions, target_home: Path) -> list[t
 
 
 def install_optional_skills(plan: InstallPlan) -> None:
+    failures: list[str] = []
     for spec, dest in optional_skill_packs(plan.options, plan.target_home):
         token = plan.options.hmx_gitlab_token if spec.name == "hmx-knowledge" else ""
-        install_skill_pack(spec, dest, dry_run=plan.options.dry_run, gitlab_token=token)
+        try:
+            install_skill_pack(spec, dest, dry_run=plan.options.dry_run, gitlab_token=token)
+        except Exception as exc:
+            failures.append(spec.name)
+            print(f"Warning: optional skill pack {spec.name} failed and was skipped: {exc}")
+    if failures:
+        print("Optional skill packs skipped after errors: " + ", ".join(failures))

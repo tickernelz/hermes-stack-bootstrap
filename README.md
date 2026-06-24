@@ -72,6 +72,7 @@ Safety rules:
 - Hermes is not restarted automatically.
 - Secrets stay in `.env`, not `config.yaml`.
 - Dry-run output redacts obvious secret keys.
+- Interactive choices are saved in `.hermes-stack-bootstrap.json` inside the target Hermes home, so reruns can reuse the last defaults without retyping everything.
 
 ## Common commands
 
@@ -101,7 +102,11 @@ bash install.sh --install-superpowers
 bash install.sh --install-impeccable
 bash install.sh --install-ponytail
 GITLAB_TOKEN=glpat_xxx bash install.sh --install-hmx-knowledge
+```
 
+Optional skill-pack installs are isolated: if one pack fails, the installer warns, skips that pack, and continues with the rest. Existing direct skill installs are moved aside before the refreshed vendor copy is staged.
+
+```bash
 # Pin progress-tail version/ref
 bash install.sh --progress-tail-ref v0.1.81
 ```
@@ -134,8 +139,8 @@ Important details:
 - The key is saved as `XAI_HASHMICRO_API_KEY` in `.env`.
 - `config.yaml` references `key_env`; it does not store the key.
 - Context lengths are stored under `custom_providers[].models`, not in route blocks.
+- GPT-5.5 context defaults to `272000`; explicit user-entered context values still win.
 - Reasoning effort defaults to `xhigh`.
-- GPT-5.5 Codex variants use a conservative `272000` context default.
 
 ## Mnemosyne modes
 

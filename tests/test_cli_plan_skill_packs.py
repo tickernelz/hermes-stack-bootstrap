@@ -307,10 +307,10 @@ class CliPlanTestsPart4(unittest.TestCase):
         self.assertFalse(options.install_hmx_knowledge)
         self.assertFalse(options.install_impeccable)
         self.assertFalse(options.install_ponytail)
-        self.assertIn(("confirm", "Install Obra Superpowers skill pack?", False), tui.events)
-        self.assertIn(("confirm", "Install HMX knowledge skill pack?", False), tui.events)
-        self.assertIn(("confirm", "Install Impeccable design skill?", False), tui.events)
-        self.assertIn(("confirm", "Install strongly recommended Ponytail skill pack?", True), tui.events)
+        self.assertIn(("select", "Install Obra Superpowers skill pack?", ("Yes", "No"), "No"), tui.events)
+        self.assertIn(("select", "Install HMX knowledge skill pack?", ("Yes", "No"), "No"), tui.events)
+        self.assertIn(("select", "Install Impeccable design skill?", ("Yes", "No"), "No"), tui.events)
+        self.assertIn(("select", "Install strongly recommended Ponytail skill pack?", ("Yes", "No"), "Yes"), tui.events)
 
     def test_wizard_accepts_noninteractive_soul_generation_options(self):
         with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):

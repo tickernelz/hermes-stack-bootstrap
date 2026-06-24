@@ -28,6 +28,7 @@ from .bootstrap_prompts import prompt_soul_options, prompt_yes_no, require_tui, 
 from .bootstrap_runtime import hermes_bin_for_options, runtime_python_for_options, validate_runtime_options
 from .bootstrap_shell import render_command
 from .bootstrap_skill_packs import install_optional_skills
+from .bootstrap_state import save_options_state, state_path_for
 from .bootstrap_tui import RichPromptTui
 from .config_merge import build_target_config, read_config, write_config
 from .env_template import build_env_values, managed_env_keys, merge_env_text, render_env_block
@@ -302,6 +303,8 @@ def apply_plan(plan: InstallPlan, ui: RichPromptTui | None = None) -> None:
         if not prompt_yes_no("Apply this plan?", False, ui):
             print("Aborted.")
             return
+    if not plan.options.dry_run:
+        save_options_state(state_path_for(plan.target_home), plan.options)
     install_lcm(plan)
     install_mnemosyne(plan)
     install_progress_tail(plan)

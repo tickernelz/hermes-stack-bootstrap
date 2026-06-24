@@ -52,16 +52,7 @@ class RichPromptTui:
         return self._prompt(f"{prompt}: ", is_password=True).strip()
 
     def confirm(self, prompt: str, default: bool = False) -> bool:
-        suffix = "Y/n" if default else "y/N"
-        while True:
-            answer = self._prompt(f"{prompt} [{suffix}] ").strip().lower()
-            if not answer:
-                return default
-            if answer in {"y", "yes"}:
-                return True
-            if answer in {"n", "no"}:
-                return False
-            self.console.print("[yellow]Please answer yes or no.[/yellow]")
+        return self.select(prompt, ("Yes", "No"), "Yes" if default else "No") == "Yes"
 
     def select(self, prompt: str, choices: Sequence[str], default: str = "") -> str:
         choices = tuple(choices)

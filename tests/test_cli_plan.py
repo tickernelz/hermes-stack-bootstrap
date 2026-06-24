@@ -342,8 +342,8 @@ class CliPlanTestsPart1(unittest.TestCase):
         self.assertEqual(generated_plan.options.soul_user_name, "Zhafron")
         self.assertEqual(generated_plan.options.soul_communication, DEFAULT_SOUL_COMMUNICATION_STYLE)
         self.assertEqual(generated_plan.options.soul_language, DEFAULT_SOUL_LANGUAGE)
-        confirm_prompts = [event[1] for event in tui.events if event[0] == "confirm"]
-        self.assertIn("Generate SOUL.md with Hermes AI backend now?", confirm_prompts)
+        soul_prompts = [event[1] for event in tui.events if event[0] == "select"]
+        self.assertIn("Generate SOUL.md with Hermes AI backend now?", soul_prompts)
 
     def test_apply_plan_existing_soul_overwrite_prompt_happens_after_verification(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -390,7 +390,7 @@ class CliPlanTestsPart1(unittest.TestCase):
         overwrite_index = next(
             index
             for index, event in enumerate(tui.events)
-            if event[0] == "confirm" and str(event[1]).startswith("SOUL.md already exists")
+            if event[0] == "select" and str(event[1]).startswith("SOUL.md already exists")
         )
         soul_index = tui.events.index(("call", "soul"))
         self.assertLess(verify_index, overwrite_index)

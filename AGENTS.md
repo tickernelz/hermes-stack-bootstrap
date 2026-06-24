@@ -97,6 +97,8 @@ Common compatibility trap:
 - Never write provider/API tokens into `config.yaml`.
 - Secrets belong in `.env` through env-var names like `XAI_HASHMICRO_API_KEY`, not inline config values.
 - Dry-run output must redact obvious secrets.
+- Non-dry-run confirmed installs save non-secret wizard defaults to `.hermes-stack-bootstrap.json` in the target Hermes home.
+- Persisted defaults must never include API keys, GitLab tokens, passwords, or embedding secrets.
 - Hermes is not restarted automatically.
 - `curl | bash` must remain prompt-safe by reattaching interactive prompts to `/dev/tty`.
 
@@ -116,7 +118,7 @@ Keep these rules unless the user changes direction:
 - default reasoning effort: `xhigh`
 - context lengths live under `custom_providers[].models`, not route blocks
 - route blocks should normally contain `provider` and `model` only
-- GPT-5.5 Codex variants use `272000` context length even if live metadata reports a larger generic context
+- GPT-5.5 variants default to `272000` context length unless the user explicitly enters another value
 
 ## Skill pack staging rules
 
@@ -140,6 +142,8 @@ Do not install repo scaffolding as Hermes skills:
 - repo-level tooling
 
 Older bad repo-root skill installs should be moved aside under profile backups, not deleted blindly.
+
+If an optional skill pack fails to clone/install, warn and continue with the remaining optional packs. A GitLab token rate limit must not abort unrelated skill installs or the rest of the bootstrap.
 
 ## SOUL.md generation rules
 

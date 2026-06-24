@@ -57,8 +57,10 @@ from .bootstrap_runtime import (
     install_mode_label,
     normalize_install_mode,
     parse_profiles,
+    target_home_for,
     validate_runtime_options,
 )
+from .bootstrap_state import apply_saved_state, explicit_flags_from_argv, load_env_values, load_state, state_path_for
 from .bootstrap_tui import RichPromptTui, TuiDependencyError, create_tui
 from .env_template import MNEMOSYNE_MODES
 from .hermes_discovery import discover_hermes_runtime
@@ -74,6 +76,8 @@ def wizard(
     ui: RichPromptTui | None = None,
 ) -> InstallerOptions:
     runtime_env = os.environ if env is None else env
+    argv_list = list(argv) if argv is not None else None
+    explicit_flags = explicit_flags_from_argv(argv_list)
     parser = argparse.ArgumentParser(description="Bootstrap Hermes LCM + Mnemosyne + progress-tail")
     parser.add_argument("--home", default=None)
     parser.add_argument(
@@ -245,15 +249,18 @@ def wizard(
         default=_env_get(runtime_env, "HERMES_STACK_HASHMICRO_REASONING_EFFORT", HASHMICRO_DEFAULT_REASONING_EFFORT),
         help="Reasoning effort for HashMicro main/delegation routes.",
     )
-    args = parser.parse_args(list(argv) if argv is not None else None)
+    args = parser.parse_args(argv_list)
+    home = Path(args.home).expanduser() if args.home else detect_base_home(args.hermes_bin or None)
+    saved_state = load_state(state_path_for(home))
+    apply_saved_state(args, saved_state, explicit_flags)
     args.install_mode = normalize_install_mode(args.install_mode)
     if args.yes:
         apply_install_mode_defaults(args)
-    apply_full_online_embedding_env_defaults(args, runtime_env)
-    apply_hashmicro_env_defaults(args, runtime_env)
+    saved_env = {**load_env_values(home / ".env"), **dict(runtime_env)}
+    apply_full_online_embedding_env_defaults(args, saved_env)
+    apply_hashmicro_env_defaults(args, saved_env)
     populate_hashmicro_model_metadata(args)
 
-    home = Path(args.home).expanduser() if args.home else detect_base_home(args.hermes_bin or None)
     runtime = discover_hermes_runtime(
         base_home=home,
         hermes_bin=args.hermes_bin,
@@ -261,6 +268,15 @@ def wizard(
         env=runtime_env,
     )
     profiles = parse_profiles(args.profile)
+    if profiles:
+        profile_env = load_env_values(target_home_for(home, profiles[0]) / ".env")
+        saved_env = {**saved_env, **profile_env, **dict(runtime_env)}
+        if not getattr(args, "hmx_gitlab_token", ""):
+            args.hmx_gitlab_token = _env_get(saved_env, "GITLAB_TOKEN", "")
+        if not getattr(args, "hashmicro_api_key", ""):
+            args.hashmicro_api_key = _env_get(saved_env, args.hashmicro_key_env, "")
+        if args.mnemosyne_mode == "full-online" and not getattr(args, "mnemosyne_embedding_api_key", ""):
+            args.mnemosyne_embedding_api_key = _env_get(saved_env, "MNEMOSYNE_EMBEDDING_API_KEY", "")
     if not args.yes:
         tui = require_tui(ui)
         tui.banner(
@@ -290,9 +306,18 @@ def wizard(
             args.skip_mnemosyne = skip_mnemosyne
         if args.profile is None:
             profiles = prompt_profiles(tui, home, profiles)
+            if profiles:
+                profile_env = load_env_values(target_home_for(home, profiles[0]) / ".env")
+                saved_env = {**saved_env, **profile_env, **dict(runtime_env)}
+                if not getattr(args, "hmx_gitlab_token", ""):
+                    args.hmx_gitlab_token = _env_get(saved_env, "GITLAB_TOKEN", "")
+                if not getattr(args, "hashmicro_api_key", ""):
+                    args.hashmicro_api_key = _env_get(saved_env, args.hashmicro_key_env, "")
+                if args.mnemosyne_mode == "full-online" and not getattr(args, "mnemosyne_embedding_api_key", ""):
+                    args.mnemosyne_embedding_api_key = _env_get(saved_env, "MNEMOSYNE_EMBEDDING_API_KEY", "")
         if args.install_mode != "soul-only" and not args.skip_config_env:
             tui_step(tui, "3. Recommended provider setup")
-            prompt_hashmicro_provider_setup(args, tui, runtime_env)
+            prompt_hashmicro_provider_setup(args, tui, saved_env)
             hashmicro_choice = hashmicro_provider_choice_from_args(args)
             if hashmicro_choice:
                 detected_providers = [hashmicro_choice, *detected_providers]
@@ -309,7 +334,7 @@ def wizard(
             )
             if args.mnemosyne_mode not in MNEMOSYNE_MODES:
                 raise ValueError(f"Unknown Mnemosyne mode: {args.mnemosyne_mode}")
-        apply_full_online_embedding_env_defaults(args, runtime_env)
+        apply_full_online_embedding_env_defaults(args, saved_env)
         if not args.skip_mnemosyne and args.mnemosyne_mode in {"hybrid", "full-online"}:
             args.mnemosyne_llm_provider, args.mnemosyne_llm_model = select_provider_and_model(
                 tui=tui,
@@ -358,16 +383,25 @@ def wizard(
             tui_step(tui, "5. Stack components")
         if args.install_mode != "soul-only":
             tui_step(tui, "6. Skill packs and credentials")
-        if args.install_mode != "soul-only" and not args.install_superpowers:
-            args.install_superpowers = prompt_yes_no("Install Obra Superpowers skill pack?", False, tui)
-        if args.install_mode != "soul-only" and not args.install_hmx_knowledge:
-            args.install_hmx_knowledge = prompt_yes_no("Install HMX knowledge skill pack?", False, tui)
-        if args.install_mode != "soul-only" and args.install_hmx_knowledge:
-            prompt_hmx_gitlab_token_if_needed(args, tui, runtime_env)
-        if args.install_mode != "soul-only" and not args.install_impeccable:
-            args.install_impeccable = prompt_yes_no("Install Impeccable design skill?", False, tui)
-        if args.install_mode != "soul-only" and not args.install_ponytail:
-            args.install_ponytail = prompt_yes_no("Install strongly recommended Ponytail skill pack?", True, tui)
+            args.install_superpowers = prompt_yes_no(
+                "Install Obra Superpowers skill pack?", bool(args.install_superpowers), tui
+            )
+            args.install_hmx_knowledge = prompt_yes_no(
+                "Install HMX knowledge skill pack?", bool(args.install_hmx_knowledge), tui
+            )
+            if args.install_hmx_knowledge:
+                prompt_hmx_gitlab_token_if_needed(args, tui, saved_env)
+            args.install_impeccable = prompt_yes_no(
+                "Install Impeccable design skill?", bool(args.install_impeccable), tui
+            )
+            ponytail_default = (
+                bool(args.install_ponytail)
+                if "install_ponytail" in saved_state or "--install-ponytail" in explicit_flags
+                else True
+            )
+            args.install_ponytail = prompt_yes_no(
+                "Install strongly recommended Ponytail skill pack?", ponytail_default, tui
+            )
     if args.summary_model:
         args.lcm_summary_model = args.summary_model
         if not args.lcm_expansion_model:
