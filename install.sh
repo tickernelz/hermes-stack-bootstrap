@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO="${HERMES_STACK_REPO:-tickernelz/hermes-stack-bootstrap}"
-REF="${HERMES_STACK_REF:-v0.1.10}"
+REF="${HERMES_STACK_REF:-v0.1.11}"
 SOURCE_DIR="${HERMES_STACK_SOURCE_DIR:-}"
 BOOTSTRAP_DEPS=("PyYAML>=6" "rich>=13" "prompt_toolkit>=3")
 TMP_DIR=""

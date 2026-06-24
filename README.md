@@ -17,19 +17,19 @@ It installs into your own Hermes profile. It does **not** ask you to copy someon
 Run the latest released installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.1.10/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.1.11/install.sh | bash
 ```
 
 Dry-run first if you want a safe preview:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.1.10/install.sh | bash -s -- --dry-run
+curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.1.11/install.sh | bash -s -- --dry-run
 ```
 
 Inspect before running:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.1.10/install.sh
+curl -fsSLO https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.1.11/install.sh
 less install.sh
 bash install.sh --dry-run
 bash install.sh
