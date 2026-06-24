@@ -11,7 +11,6 @@ import yaml
 from hermes_stack_bootstrap.cli import (
     PROGRESS_TAIL_REF,
     InstallerOptions,
-    TuiDependencyError,
     apply_plan,
     apply_soul_generation,
     base_home_from_config_path,
@@ -29,10 +28,8 @@ from hermes_stack_bootstrap.cli import (
     main,
     stage_skill_pack,
     validate_runtime_options,
-    wizard,
     merge_config_and_env,
 )
-from hermes_stack_bootstrap.hermes_discovery import HermesRuntime
 from hermes_stack_bootstrap.hermes_models import ProviderChoice
 from hermes_stack_bootstrap.provider_setup import AUXILIARY_TASKS
 from hermes_stack_bootstrap.soul_generator import DEFAULT_SOUL_COMMUNICATION_STYLE, DEFAULT_SOUL_LANGUAGE
@@ -312,21 +309,6 @@ class CliPlanTestsPart2(unittest.TestCase):
             online_commands,
         )
 
-    def test_wizard_accepts_global_runtime_overrides_from_environment(self):
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/home/lutfi22/.hermes")):
-            options = wizard(
-                ["--yes", "--skip-mnemosyne"],
-                env={
-                    "HERMES_BIN": "/usr/local/bin/hermes",
-                    "HERMES_STACK_PYTHON": "/srv/shared/hermes/venv/bin/python",
-                },
-            )
-
-        self.assertEqual(options.base_home, Path("/home/lutfi22/.hermes"))
-        self.assertEqual(options.hermes_bin, "/usr/local/bin/hermes")
-        self.assertEqual(options.hermes_python, Path("/srv/shared/hermes/venv/bin/python"))
-        self.assertEqual(options.hermes_bin_source, "explicit")
-        self.assertEqual(options.hermes_python_source, "explicit")
 
     def test_validate_runtime_options_requires_python_when_mnemosyne_needed(self):
         options = InstallerOptions(
@@ -353,163 +335,10 @@ class CliPlanTestsPart2(unittest.TestCase):
 
         validate_runtime_options(options)
 
-    def test_wizard_prompts_to_skip_mnemosyne_when_runtime_python_missing(self):
-        missing_runtime = HermesRuntime(
-            hermes_bin="/usr/local/bin/hermes",
-            hermes_bin_source="PATH",
-            hermes_python=None,
-            hermes_python_source="not found",
-        )
-        tui = FakeTui([None, None, "Skip Mnemosyne", None, False, "", "", False, False, False, False])
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/home/lutfi22/.hermes")),
-            patch("hermes_stack_bootstrap.cli.discover_hermes_runtime", return_value=missing_runtime),
-            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
-        ):
-            options = wizard([], ui=tui)
 
-        self.assertTrue(options.skip_mnemosyne)
-        self.assertIsNone(options.hermes_python)
-        self.assertEqual(options.hermes_python_source, "not found")
 
-    def test_wizard_accepts_manual_runtime_python_when_discovery_misses(self):
-        missing_runtime = HermesRuntime(
-            hermes_bin="/usr/local/bin/hermes",
-            hermes_bin_source="PATH",
-            hermes_python=None,
-            hermes_python_source="not found",
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            runtime_python = Path(tmp) / "venv" / "bin" / "python"
-            runtime_python.parent.mkdir(parents=True)
-            runtime_python.write_text("#!/bin/sh\n", encoding="utf-8")
-            runtime_python.chmod(0o755)
-            tui = FakeTui(
-                [
-                    None,
-                    None,
-                    "Paste runtime Python path",
-                    str(runtime_python),
-                    None,
-                    False,
-                    "hybrid",
-                    "",
-                    "",
-                    False,
-                    False,
-                    False,
-                    False,
-                ]
-            )
-            with (
-                patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/home/lutfi22/.hermes")),
-                patch("hermes_stack_bootstrap.cli.discover_hermes_runtime", return_value=missing_runtime),
-                patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
-            ):
-                options = wizard([], ui=tui)
 
-        self.assertFalse(options.skip_mnemosyne)
-        self.assertEqual(options.hermes_python, runtime_python)
-        self.assertEqual(options.hermes_python_source, "manual prompt")
 
-    def test_wizard_accepts_mnemosyne_and_lcm_model_options(self):
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
-            options = wizard(
-                [
-                    "--yes",
-                    "--mnemosyne-mode",
-                    "hybrid",
-                    "--mnemosyne-llm-provider",
-                    "openrouter",
-                    "--mnemosyne-llm-model",
-                    "anthropic/claude-sonnet-4",
-                    "--lcm-summary-model",
-                    "openrouter/google/gemini-2.5-flash",
-                    "--lcm-expansion-model",
-                    "openrouter/anthropic/claude-sonnet-4",
-                ]
-            )
-
-        self.assertEqual(options.mnemosyne_mode, "hybrid")
-        self.assertEqual(options.mnemosyne_host_llm_provider, "openrouter")
-        self.assertEqual(options.mnemosyne_host_llm_model, "anthropic/claude-sonnet-4")
-        self.assertEqual(options.lcm_summary_model, "openrouter/google/gemini-2.5-flash")
-        self.assertEqual(options.lcm_expansion_model, "openrouter/anthropic/claude-sonnet-4")
-
-    def test_wizard_accepts_noninteractive_hashmicro_provider_setup(self):
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch(
-                "hermes_stack_bootstrap.cli.fetch_openai_compatible_model_metadata",
-                return_value=(
-                    ["gpt-5.5", "gpt-5.5-medium", "gpt-5.5-xhigh", "gpt-5.4-mini"],
-                    {"gpt-5.5": 272000, "gpt-5.5-medium": 400000, "gpt-5.5-xhigh": 400000, "gpt-5.4-mini": 409600},
-                ),
-            ),
-        ):
-            options = wizard(
-                [
-                    "--yes",
-                    "--setup-hashmicro-provider",
-                    "--main-model",
-                    "gpt-5.5",
-                    "--main-context-length",
-                    "400000",
-                    "--delegation-model",
-                    "gpt-5.5-medium",
-                    "--delegation-context-length",
-                    "400000",
-                    "--aux-all-model",
-                    "gpt-5.4-mini",
-                    "--aux-all-context-length",
-                    "409600",
-                    "--aux-model",
-                    "compression=gpt-5.5-medium",
-                    "--aux-context-length",
-                    "compression=400000",
-                    "--skip-mnemosyne",
-                ],
-                env={"XAI_HASHMICRO_API_KEY": "secret-from-env"},
-            )
-
-        self.assertTrue(options.setup_hashmicro_provider)
-        self.assertEqual(options.hashmicro_api_key, "secret-from-env")
-        self.assertEqual(options.hashmicro_main_model, "gpt-5.5")
-        self.assertEqual(options.hashmicro_main_context_length, 400000)
-        self.assertEqual(options.hashmicro_delegation_model, "gpt-5.5-medium")
-        self.assertEqual(options.hashmicro_delegation_context_length, 400000)
-        self.assertEqual(options.hashmicro_auxiliary_models["vision"], "gpt-5.4-mini")
-        self.assertEqual(options.hashmicro_auxiliary_context_lengths["vision"], 409600)
-        self.assertEqual(options.hashmicro_auxiliary_models["compression"], "gpt-5.5-medium")
-        self.assertEqual(options.hashmicro_auxiliary_context_lengths["compression"], 400000)
-        self.assertEqual(options.hashmicro_reasoning_effort, "xhigh")
-
-    def test_wizard_uses_272k_for_hashmicro_gpt55_codex_even_if_endpoint_reports_400k(self):
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch(
-                "hermes_stack_bootstrap.cli.fetch_openai_compatible_model_metadata",
-                return_value=(
-                    ["codex/gpt-5.5", "codex/gpt-5.5-xhigh"],
-                    {"codex/gpt-5.5": 400000, "codex/gpt-5.5-xhigh": 400000},
-                ),
-            ),
-        ):
-            options = wizard(
-                [
-                    "--yes",
-                    "--setup-hashmicro-provider",
-                    "--main-model",
-                    "codex/gpt-5.5",
-                    "--delegation-model",
-                    "codex/gpt-5.5",
-                    "--skip-mnemosyne",
-                ],
-                env={"XAI_HASHMICRO_API_KEY": "secret-from-env"},
-            )
-
-        self.assertEqual(options.hashmicro_main_context_length, 272000)
-        self.assertEqual(options.hashmicro_delegation_context_length, 272000)
 
     def test_merge_config_and_env_applies_hashmicro_provider_without_leaking_secret_to_config(self):
         with tempfile.TemporaryDirectory() as tmp:

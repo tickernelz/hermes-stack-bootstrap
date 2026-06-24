@@ -7,6 +7,7 @@ uses ``bootstrap_plan``/``bootstrap_apply`` for plan construction and execution.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -184,6 +185,12 @@ class WizardState:
     conflict_decisions: dict[str, str] = field(default_factory=dict)
     action: str = "apply"
     save_profile: str = ""
+    cli_yes: bool = False
+    cli_install_mode: str | None = None
+    cli_skip_lcm: bool = False
+    cli_skip_progress_tail: bool = False
+    soul_agent_name: str = "Assistant"
+    soul_user_name: str = "User"
 
 
 def _value(x: Any) -> Any: return getattr(x, "value", x)
@@ -194,6 +201,98 @@ def _choose(ui: WizardTui, prompt: str, choices: Sequence[Choice], default: str)
 def _multi(ui: WizardTui, prompt: str, choices: Sequence[Choice], defaults: set[str]) -> set[str]:
     d = [c for c in choices if c.value in defaults and not c.disabled]
     return {str(_value(c)) for c in ui.multi_select(prompt, choices, d)}
+
+
+def parse_cli_flags(argv: Sequence[str] | None = None) -> dict[str, Any]:
+    """Parse automation-friendly wizard flags."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--yes", "-y", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--quick", action="store_true")
+    parser.add_argument("--home")
+    parser.add_argument("--profile", action="append", default=[])
+    parser.add_argument("--install-mode", choices=("full", "plugin-skill-only", "soul-only"))
+    parser.add_argument("--skip-lcm", action="store_true")
+    parser.add_argument("--skip-mnemosyne", action="store_true")
+    parser.add_argument("--skip-progress-tail", action="store_true")
+    parser.add_argument("--skip-config-env", action="store_true")
+    parser.add_argument("--skip-verify", action="store_true")
+    parser.add_argument("--install-superpowers", action="store_true")
+    parser.add_argument("--install-hmx-knowledge", action="store_true")
+    parser.add_argument("--install-impeccable", action="store_true")
+    parser.add_argument("--install-ponytail", action="store_true")
+    # HashMicro provider flags
+    parser.add_argument("--setup-hashmicro-provider", action="store_true")
+    parser.add_argument("--main-model")
+    parser.add_argument("--main-context-length", type=int)
+    parser.add_argument("--delegation-model")
+    parser.add_argument("--delegation-context-length", type=int)
+    parser.add_argument("--aux-all-model")
+    parser.add_argument("--aux-all-context-length", type=int)
+    # SOUL generation flags
+    parser.add_argument("--soul-agent-name")
+    parser.add_argument("--soul-user-name")
+    ns, _unknown = parser.parse_known_args(list(argv or []))
+    profiles = [part.strip() for item in ns.profile for part in str(item).split(",") if part.strip()]
+    return {**vars(ns), "profile": ",".join(profiles) if profiles else ""}
+
+
+def _apply_cli_flags(state: WizardState, flags: Mapping[str, Any]) -> None:
+    state.cli_yes = bool(flags.get("yes"))
+    if flags.get("home"):
+        state.home = Path(str(flags["home"])).expanduser()
+    if flags.get("dry_run"):
+        state.dry_run = True
+        state.mode = "dry-run"
+        state.action = "plan"
+    elif state.cli_yes:
+        state.action = "apply"
+    if flags.get("profile"):
+        state.profile = str(flags["profile"])
+    if flags.get("install_mode"):
+        state.cli_install_mode = str(flags["install_mode"])
+        if state.cli_install_mode == "soul-only":
+            state.components = {"soul", "verify"}
+        elif state.cli_install_mode == "plugin-skill-only":
+            state.components = {"plugins", "skills", "verify"}
+        else:
+            state.components = {"config", "plugins", "skills", "memories", "verify"}
+    for flag, component in (("skip_mnemosyne", "memories"), ("skip_config_env", "config"), ("skip_verify", "verify")):
+        if flags.get(flag):
+            state.components.discard(component)
+    state.cli_skip_lcm = bool(flags.get("skip_lcm"))
+    state.cli_skip_progress_tail = bool(flags.get("skip_progress_tail"))
+    if state.cli_skip_lcm and state.cli_skip_progress_tail:
+        state.components.discard("plugins")
+    # Only process skill flags if skills component is enabled
+    if "skills" in state.components:
+        if any(flags.get(name) for name in ("install_superpowers", "install_hmx_knowledge", "install_impeccable", "install_ponytail")):
+            if flags.get("install_superpowers") or flags.get("install_impeccable") or flags.get("install_ponytail"):
+                state.skill_packs.add("recommended")
+            if flags.get("install_hmx_knowledge"):
+                state.skill_packs.add("hmx")
+    # HashMicro provider flags
+    if flags.get("setup_hashmicro_provider"):
+        state.provider_kind = "hashmicro"
+        state.provider_name = HASHMICRO_PROVIDER_NAME
+        state.base_url = HASHMICRO_BASE_URL
+        state.key_env = HASHMICRO_KEY_ENV
+        # Read API key from environment if available
+        if state.env.get(HASHMICRO_KEY_ENV):
+            state.api_key = state.env[HASHMICRO_KEY_ENV]
+        if flags.get("main_model"):
+            state.main_model = str(flags["main_model"])
+        if flags.get("main_context_length"):
+            state.context = int(flags["main_context_length"])
+        if flags.get("delegation_model"):
+            state.delegation_model = str(flags["delegation_model"])
+        if flags.get("aux_all_model"):
+            state.aux = {task: str(flags["aux_all_model"]) for task in AUXILIARY_TASKS}
+    # SOUL generation flags
+    if flags.get("soul_agent_name"):
+        state.soul_agent_name = str(flags["soul_agent_name"])
+    if flags.get("soul_user_name"):
+        state.soul_user_name = str(flags["soul_user_name"])
 
 
 def _load_yaml_json(path: Path) -> dict[str, Any]:
@@ -253,7 +352,7 @@ def step1(ui: WizardTui, state: WizardState) -> None:
     saved_files = sorted(CHOICES_DIR.glob("*.json")) + sorted(CHOICES_DIR.glob("*.yaml")) + sorted(CHOICES_DIR.glob("*.yml"))
     existing = any((h / "config.yaml").exists() or (h / "profiles").exists() for h in _detect_homes(state.env))
     ui.info(f"Detected {'existing Hermes data' if existing else 'no existing Hermes install'}; saved profiles: {len(saved_files)}")
-    state.mode = _choose(ui, "Install intent", [Choice(k, v) for k, v in MODES.items()], state.saved.get("mode", "full"))
+    state.mode = _choose(ui, "Install intent", [Choice(k, v) for k, v in MODES.items()], state.saved.get("mode", state.mode))
     state.dry_run = state.mode == "dry-run"
     if saved_files:
         choices = [Choice("Use recommended defaults", "fresh")] + [Choice(f"Load saved profile: {p.stem}", str(p)) for p in saved_files]
@@ -273,7 +372,7 @@ def step2(ui: WizardTui, state: WizardState) -> None:
     state.home = Path(ui.text("Custom Hermes home", str(Path("~/.hermes").expanduser())) if home == "custom" else home).expanduser()
     profiles_dir = state.home / "profiles"
     profiles = [p.name for p in profiles_dir.iterdir() if p.is_dir()] if profiles_dir.exists() else []
-    profile = _choose(ui, "Hermes profile", [Choice(p, p) for p in profiles] + [Choice("default", "default"), Choice("Create new profile...", "new")], str(state.saved.get("profile", "default")))
+    profile = _choose(ui, "Hermes profile", [Choice(p, p) for p in profiles] + [Choice("default", "default"), Choice("Create new profile...", "new")], str(state.saved.get("profile", state.profile)))
     state.profile = ui.text("New profile name", "default") if profile == "new" else profile
     runtime = discover_hermes_runtime(base_home=state.home, env=state.env)
     state.hermes_bin = runtime.hermes_bin or "hermes"
@@ -411,16 +510,24 @@ def step9(ui: WizardTui, state: WizardState, options: InstallerOptions) -> None:
 
 
 def to_installer_options(state: WizardState) -> InstallerOptions:
-    mode = "plugin-skill-only" if state.mode in {"skills-only", "plugins-only"} else "full"
+    mode = state.cli_install_mode or ("plugin-skill-only" if state.mode in {"skills-only", "plugins-only"} else "full")
     setup_provider = state.provider_kind in {"hashmicro", "custom", "existing"} and "config" in state.components
+    
+    # Only install skills if "skills" component is enabled
+    skills_enabled = "skills" in state.components
+    install_superpowers = skills_enabled and "recommended" in state.skill_packs
+    install_impeccable = skills_enabled and "recommended" in state.skill_packs
+    install_hmx = skills_enabled and "hmx" in state.skill_packs
+    install_ponytail = skills_enabled and "recommended" in state.skill_packs
+    
     return InstallerOptions(
         base_home=state.home, profile=state.profile, hermes_bin=state.hermes_bin, hermes_python=state.hermes_python,
         hermes_python_source=state.hermes_python_source, yes=True, dry_run=state.dry_run or state.action in {"plan", "save-plan"}, install_mode=mode,
-        skip_lcm="plugins" not in state.components, skip_mnemosyne="memories" not in state.components,
-        skip_progress_tail="plugins" not in state.components, skip_config_env="config" not in state.components,
+        skip_lcm=state.cli_skip_lcm or "plugins" not in state.components, skip_mnemosyne="memories" not in state.components,
+        skip_progress_tail=state.cli_skip_progress_tail or "plugins" not in state.components, skip_config_env="config" not in state.components,
         skip_verify="verify" not in state.components, progress_tail_ref=PROGRESS_TAIL_REF,
-        install_superpowers="recommended" in state.skill_packs, install_hmx_knowledge="hmx" in state.skill_packs,
-        install_impeccable="recommended" in state.skill_packs, install_ponytail="recommended" in state.skill_packs,
+        install_superpowers=install_superpowers, install_hmx_knowledge=install_hmx,
+        install_impeccable=install_impeccable, install_ponytail=install_ponytail,
         hmx_knowledge_url=HMX_KNOWLEDGE_REPO, hmx_gitlab_token=state.hmx_token,
         setup_hashmicro_provider=setup_provider, hashmicro_base_url=state.base_url, hashmicro_provider_name=state.provider_name,
         hashmicro_key_env=state.key_env, hashmicro_api_key=state.api_key, hashmicro_main_model=state.main_model,
@@ -428,6 +535,7 @@ def to_installer_options(state: WizardState) -> InstallerOptions:
         hashmicro_delegation_context_length=state.context, hashmicro_auxiliary_models=state.aux,
         hashmicro_auxiliary_context_lengths={k: state.context for k in state.aux}, hashmicro_reasoning_effort=HASHMICRO_DEFAULT_REASONING_EFFORT,
         hashmicro_available_models=tuple(state.models), generate_soul="soul" in state.components,
+        soul_agent_name=state.soul_agent_name, soul_user_name=state.soul_user_name,
     )
 
 
@@ -482,15 +590,36 @@ def quick_install(*, env: Mapping[str, str] | None = None, ui: WizardTui | None 
     return options
 
 
-def run_wizard_v2(*, env: Mapping[str, str] | None = None, ui: WizardTui | None = None, execute: bool = True) -> InstallerOptions:
+def run_wizard_v2(
+    *,
+    env: Mapping[str, str] | None = None,
+    ui: WizardTui | None = None,
+    execute: bool = True,
+    argv: Sequence[str] | None = None,
+) -> InstallerOptions:
     """Run all nine v2 wizard steps and return the resulting options.
 
     When ``execute`` is false, Step 9 is skipped after options are built; this is
     useful for tests and for callers that only need the dataclass conversion.
     """
     runtime_env = dict(os.environ if env is None else env)
+    flags = parse_cli_flags(sys.argv[1:] if argv is None else argv)
+    if flags.get("quick"):
+        return quick_install(env=runtime_env, ui=ui)
     state = WizardState(env=runtime_env)
+    _apply_cli_flags(state, flags)
     tui = ui or ConsoleWizardTui()
+    if state.cli_yes:
+        tui.info("Non-interactive mode - using defaults and CLI flags")
+        # Discover runtime like interactive mode does
+        runtime = discover_hermes_runtime(base_home=state.home)
+        if runtime and runtime.hermes_python:
+            state.hermes_python = runtime.hermes_python
+            state.hermes_python_source = runtime.hermes_python_source
+        options = to_installer_options(state)
+        if execute:
+            step9(tui, state, options)
+        return options
     step1(tui, state); step2(tui, state); step3(tui, state); step4(tui, state)
     step5(tui, state); step6(tui, state); step7(tui, state)
     options = step8(tui, state)

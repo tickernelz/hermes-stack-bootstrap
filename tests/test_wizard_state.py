@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 
 from hermes_stack_bootstrap.bootstrap_data import InstallerOptions
-from hermes_stack_bootstrap.wizard_v2_state import (
+from hermes_stack_bootstrap.wizard_state import (
     WizardStateError,
     apply_profile_defaults,
     list_profiles,

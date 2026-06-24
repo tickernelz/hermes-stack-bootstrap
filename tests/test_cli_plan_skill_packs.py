@@ -11,7 +11,6 @@ import yaml
 from hermes_stack_bootstrap.cli import (
     PROGRESS_TAIL_REF,
     InstallerOptions,
-    TuiDependencyError,
     apply_plan,
     apply_soul_generation,
     base_home_from_config_path,
@@ -29,10 +28,8 @@ from hermes_stack_bootstrap.cli import (
     main,
     stage_skill_pack,
     validate_runtime_options,
-    wizard,
     merge_config_and_env,
 )
-from hermes_stack_bootstrap.hermes_discovery import HermesRuntime
 from hermes_stack_bootstrap.hermes_models import ProviderChoice
 from hermes_stack_bootstrap.provider_setup import AUXILIARY_TASKS
 from hermes_stack_bootstrap.soul_generator import DEFAULT_SOUL_COMMUNICATION_STYLE, DEFAULT_SOUL_LANGUAGE
@@ -225,68 +222,7 @@ class CliPlanTestsPart4(unittest.TestCase):
 
         self.assertEqual(install_pack.call_args.kwargs["gitlab_token"], "glpat-secret")
 
-    def test_full_online_env_merge_removes_stale_local_embedding_defaults_when_switching_modes(self):
 
-        tui = FakeTui(
-            [
-                None,  # install mode
-                None,
-                None,
-                False,  # skip HashMicro provider setup
-                "hybrid",
-                None,  # no lcm summary override
-                None,  # no lcm expansion override
-                False,  # skip Superpowers
-                False,  # skip HMX knowledge
-                False,  # skip Impeccable
-                False,  # skip recommended Ponytail
-            ]
-        )
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
-        ):
-            options = wizard([], ui=tui)
-
-        self.assertFalse(options.install_superpowers)
-        self.assertFalse(options.install_hmx_knowledge)
-        self.assertFalse(options.install_impeccable)
-        self.assertFalse(options.install_ponytail)
-        self.assertIn(("select", "Install Obra Superpowers skill pack?", ("Yes", "No"), "No"), tui.events)
-        self.assertIn(("select", "Install HMX knowledge skill pack?", ("Yes", "No"), "No"), tui.events)
-        self.assertIn(("select", "Install Impeccable design skill?", ("Yes", "No"), "No"), tui.events)
-        self.assertIn(("select", "Install strongly recommended Ponytail skill pack?", ("Yes", "No"), "Yes"), tui.events)
-
-    def test_wizard_accepts_noninteractive_soul_generation_options(self):
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
-            options = wizard(
-                [
-                    "--yes",
-                    "--generate-soul",
-                    "--soul-agent-name",
-                    "Gatot",
-                    "--soul-user-name",
-                    "Zhafron",
-                    "--soul-communication",
-                    "Blunt and concise",
-                    "--soul-language",
-                    "Bahasa Indonesia",
-                    "--soul-provider",
-                    "openrouter",
-                    "--soul-model",
-                    "anthropic/claude-sonnet-4",
-                    "--soul-overwrite",
-                ]
-            )
-
-        self.assertTrue(options.generate_soul)
-        self.assertEqual(options.soul_agent_name, "Gatot")
-        self.assertEqual(options.soul_user_name, "Zhafron")
-        self.assertEqual(options.soul_communication, "Blunt and concise")
-        self.assertEqual(options.soul_language, "Bahasa Indonesia")
-        self.assertEqual(options.soul_provider, "openrouter")
-        self.assertEqual(options.soul_model, "anthropic/claude-sonnet-4")
-        self.assertTrue(options.soul_overwrite)
 
     def test_apply_plan_soul_only_prompts_identity_after_plan_approval(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -330,26 +266,7 @@ class CliPlanTestsPart4(unittest.TestCase):
         self.assertNotIn("Agent role", text_prompts)
         self.assertNotIn("Behavior / personality", text_prompts)
 
-    def test_wizard_rejects_noninteractive_generate_soul_when_required_answers_missing(self):
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
-            with self.assertRaisesRegex(ValueError, "--soul-agent-name"):
-                wizard(["--yes", "--generate-soul"])
 
-    def test_wizard_uses_soul_style_and_language_defaults_when_omitted(self):
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
-            options = wizard(
-                [
-                    "--yes",
-                    "--generate-soul",
-                    "--soul-agent-name",
-                    "Gatot",
-                    "--soul-user-name",
-                    "Zhafron",
-                ]
-            )
-
-        self.assertEqual(options.soul_communication, DEFAULT_SOUL_COMMUNICATION_STYLE)
-        self.assertEqual(options.soul_language, DEFAULT_SOUL_LANGUAGE)
 
     def test_build_plan_includes_soul_generation_step(self):
         options = InstallerOptions(

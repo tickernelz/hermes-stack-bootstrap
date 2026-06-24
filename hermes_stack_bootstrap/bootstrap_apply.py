@@ -352,6 +352,9 @@ def apply_plan(plan: InstallPlan, ui: RichPromptTui | None = None) -> None:
     merge_config_and_env(plan)
     run_verification(plan)
     if plan.options.generate_soul:
+        if plan.options.dry_run:
+            print("DRY-RUN would generate SOUL.md")
+            return
         soul_options = plan.options
         if not soul_options.soul_agent_name.strip() or not soul_options.soul_user_name.strip():
             soul_options = prompt_soul_options(soul_options, ui)

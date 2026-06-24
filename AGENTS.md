@@ -79,7 +79,9 @@ Core modules are split by responsibility:
 - `bootstrap_skill_packs.py` — optional skill pack staging/install
 - `bootstrap_option_flow.py` — CLI/env option normalization
 - `bootstrap_prompts.py` — interactive prompt helpers
-- `bootstrap_wizard.py` — parser and wizard orchestration
+- `wizard_flow.py` — wizard orchestration and flow control
+- `wizard_state.py` — wizard state models and persistence helpers
+- `wizard_tui.py` — wizard-specific terminal UI helpers
 - `bootstrap_commands.py` — subprocess wrapper
 
 When moving functions out of `cli.py`, keep old patch points working or update tests deliberately.

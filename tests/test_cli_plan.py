@@ -31,10 +31,8 @@ from hermes_stack_bootstrap.cli import (
     main,
     stage_skill_pack,
     validate_runtime_options,
-    wizard,
     merge_config_and_env,
 )
-from hermes_stack_bootstrap.hermes_discovery import HermesRuntime
 from hermes_stack_bootstrap.hermes_models import ProviderChoice
 from hermes_stack_bootstrap.provider_setup import AUXILIARY_TASKS
 from hermes_stack_bootstrap.soul_generator import DEFAULT_SOUL_COMMUNICATION_STYLE, DEFAULT_SOUL_LANGUAGE
@@ -54,164 +52,12 @@ class CliPlanTestsPart1(unittest.TestCase):
             Path("/srv/hermes"),
         )
 
-    def test_wizard_uses_detected_base_home_noninteractive(self):
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
-            options = wizard(["--yes"])
 
-        self.assertEqual(options.base_home, Path("/srv/hermes"))
-        self.assertEqual(options.profile, "default")
-        self.assertEqual(options.mnemosyne_mode, "hybrid")
 
-    def test_wizard_allows_manual_base_home_override(self):
-        tui = FakeTui([None, "/opt/hermes", ["work"], False, "full-local", "", "", False, False, False, False])
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
-        ):
-            options = wizard([], ui=tui)
 
-        self.assertEqual(options.base_home, Path("/opt/hermes"))
-        self.assertEqual(options.profile, "work")
 
-    def test_interactive_wizard_uses_multi_select_for_profiles(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            base_home = Path(tmp)
-            (base_home / "config.yaml").write_text("model: {}\n", encoding="utf-8")
-            (base_home / "profiles" / "work").mkdir(parents=True)
-            (base_home / "profiles" / "work" / "config.yaml").write_text("model: {}\n", encoding="utf-8")
-            tui = FakeTui(
-                [
-                    "Plugin & skill only",
-                    None,  # base home
-                    ["default", "work"],  # profiles via multi-select
-                    False,  # skip Superpowers
-                    False,  # skip HMX knowledge
-                    False,  # skip Impeccable
-                    False,  # skip Ponytail
-                ]
-            )
-            with (
-                patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=base_home),
-                patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
-            ):
-                options = wizard([], ui=tui)
 
-        self.assertEqual(options.profile, "default,work")
-        profile_events = [
-            event for event in tui.events if event[0] == "multi_select" and event[1] == "Target profile(s)"
-        ]
-        self.assertEqual(len(profile_events), 1)
-        self.assertEqual(profile_events[0][2], ("default", "work"))
-        text_prompts = [event[1] for event in tui.events if event[0] == "text"]
-        self.assertNotIn("Target profile(s), comma-separated", text_prompts)
 
-    def test_noninteractive_install_mode_aliases_are_normalized(self):
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
-            plugin_options = wizard(["--yes", "--install-mode", "plugins-only"])
-            soul_options = wizard(
-                [
-                    "--yes",
-                    "--install-mode",
-                    "soul",
-                    "--soul-agent-name",
-                    "Gatot",
-                    "--soul-user-name",
-                    "Zhafron",
-                ]
-            )
-
-        self.assertEqual(plugin_options.install_mode, "plugin-skill-only")
-        self.assertTrue(plugin_options.skip_mnemosyne)
-        self.assertTrue(plugin_options.skip_config_env)
-        self.assertEqual(soul_options.install_mode, "soul-only")
-        self.assertTrue(soul_options.generate_soul)
-        self.assertTrue(soul_options.skip_verify)
-
-    def test_interactive_install_mode_selection_does_not_keep_env_default_skip_flags(self):
-        tui = FakeTui(
-            [
-                "Full process",
-                None,  # base home
-                None,  # profiles
-                False,  # skip HashMicro provider setup
-                "hybrid",
-                "",  # lcm summary
-                "",  # lcm expansion
-                False,  # skip Superpowers
-                False,  # skip HMX knowledge
-                False,  # skip Impeccable
-                False,  # skip Ponytail
-            ]
-        )
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
-        ):
-            options = wizard([], env={"HERMES_STACK_INSTALL_MODE": "soul"}, ui=tui)
-
-        self.assertEqual(options.install_mode, "full")
-        self.assertFalse(options.skip_lcm)
-        self.assertFalse(options.skip_mnemosyne)
-        self.assertFalse(options.skip_progress_tail)
-        self.assertFalse(options.skip_config_env)
-        self.assertFalse(options.skip_verify)
-        self.assertFalse(options.generate_soul)
-
-    def test_interactive_wizard_prompts_for_run_mode_first(self):
-        tui = FakeTui(
-            [
-                "Plugin & skill only",
-                None,  # base home
-                None,  # profiles
-                False,  # skip Superpowers
-                False,  # skip HMX knowledge
-                False,  # skip Impeccable
-                False,  # skip Ponytail
-            ]
-        )
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
-        ):
-            options = wizard([], ui=tui)
-
-        self.assertEqual(tui.events[1], ("step", "1. Install scope"))
-        first_select = next(event for event in tui.events if event[0] == "select")
-        self.assertEqual(first_select[1], "Install mode")
-        self.assertEqual(options.install_mode, "plugin-skill-only")
-        self.assertTrue(options.skip_mnemosyne)
-        self.assertTrue(options.skip_config_env)
-        self.assertFalse(options.skip_lcm)
-        self.assertFalse(options.skip_progress_tail)
-
-    def test_interactive_wizard_soul_only_mode_skips_install_without_identity_prompt(self):
-        tui = FakeTui(
-            [
-                "Generate SOUL.md only",
-                None,  # base home
-                None,  # profiles
-            ]
-        )
-        with (
-            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
-            patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
-        ):
-            options = wizard([], ui=tui)
-
-        self.assertEqual(options.install_mode, "soul-only")
-        self.assertTrue(options.generate_soul)
-        self.assertTrue(options.skip_lcm)
-        self.assertTrue(options.skip_mnemosyne)
-        self.assertTrue(options.skip_progress_tail)
-        self.assertTrue(options.skip_config_env)
-        self.assertTrue(options.skip_verify)
-        self.assertEqual(options.soul_agent_name, "")
-        self.assertEqual(options.soul_user_name, "")
-        text_prompts = [event[1] for event in tui.events if event[0] == "text"]
-        self.assertNotIn("Agent name", text_prompts)
-        self.assertNotIn("User name", text_prompts)
-        confirm_prompts = [event[1] for event in tui.events if event[0] == "confirm"]
-        self.assertNotIn("Install Obra Superpowers skill pack?", confirm_prompts)
 
     def test_plugin_skill_only_plan_skips_config_env_and_mnemosyne_verify(self):
         options = InstallerOptions(
@@ -385,15 +231,6 @@ class CliPlanTestsPart1(unittest.TestCase):
             self.assertIn(("status_stop", "Generating SOUL.md with Hermes AI backend..."), tui.events)
             self.assertEqual((Path(tmp) / "SOUL.md").read_text(encoding="utf-8"), valid_soul + "\n")
 
-    def test_interactive_wizard_requires_tui_dependencies_without_injected_ui(self):
-        with patch(
-            "hermes_stack_bootstrap.cli.create_tui",
-            side_effect=TuiDependencyError(
-                "TUI dependencies are required: install with `python -m pip install rich prompt_toolkit`"
-            ),
-        ):
-            with self.assertRaisesRegex(TuiDependencyError, "prompt_toolkit"):
-                wizard([])
 
     def test_progress_tail_ref_defaults_to_latest_release(self):
         self.assertEqual(PROGRESS_TAIL_REF, "latest")

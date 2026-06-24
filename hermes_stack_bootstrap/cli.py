@@ -8,9 +8,8 @@ from typing import Iterable
 
 from . import bootstrap_apply as _apply
 from . import bootstrap_option_flow as _option_flow
-from . import bootstrap_prompts as _prompts
 from . import bootstrap_skill_packs as _skill_packs
-from . import bootstrap_wizard as _wizard
+from . import wizard_flow as _wizard_flow
 from .bootstrap_apply import (
     backup_files,
     backup_soul_file,
@@ -25,15 +24,17 @@ from .bootstrap_commands import run_command
 from .bootstrap_data import *
 from .bootstrap_option_flow import *
 from .bootstrap_plan import *
-from .bootstrap_prompts import *
 from .bootstrap_runtime import *
 from .bootstrap_shell import *
 from .bootstrap_skill_packs import *
-from .bootstrap_tui import RichPromptTui, TuiDependencyError, create_tui
 from .hermes_discovery import discover_hermes_runtime
 from .hermes_models import provider_choices
 from .provider_setup import fetch_openai_compatible_model_metadata
 from .soul_generator import generate_soul_with_hermes
+from .wizard_flow import quick_install, run_wizard_v2 as run_wizard
+from .wizard_state import profile_delete, profile_list, profile_show
+from .wizard_tui import RichWizardTui as RichPromptTui
+from .wizard_tui import TuiDependencyError, create_tui
 
 _apply_install_lcm = _apply.install_lcm
 _apply_install_mnemosyne = _apply.install_mnemosyne
@@ -91,13 +92,8 @@ def _sync_apply_compat_globals() -> None:
 
 
 def _sync_wizard_compat_globals() -> None:
-    _wizard.create_tui = create_tui
-    _prompts.create_tui = create_tui
-    _wizard.detect_base_home = detect_base_home
-    _wizard.discover_hermes_runtime = discover_hermes_runtime
-    _wizard.provider_choices = provider_choices
+    _wizard_flow.discover_hermes_runtime = discover_hermes_runtime
     _option_flow.fetch_openai_compatible_model_metadata = fetch_openai_compatible_model_metadata
-    _prompts.fetch_openai_compatible_model_metadata = fetch_openai_compatible_model_metadata
 
 
 def apply_plan(plan, ui=None) -> None:
@@ -112,42 +108,13 @@ def apply_plans(plans, ui=None) -> None:
 
 def wizard(argv: Iterable[str] | None = None, *, env=None, ui=None):
     _sync_wizard_compat_globals()
-    
-    # Check for --quick flag first
-    if argv is None:
-        argv_list = sys.argv[1:]
-    else:
-        argv_list = list(argv)
-    
+
+    argv_list = sys.argv[1:] if argv is None else list(argv)
     if "--quick" in argv_list:
-        # Quick install mode: skip wizard, use recommended defaults
-        from .wizard_v2_flow import quick_install
         return quick_install(env=env, ui=ui)
-    
-    # Wizard v2 is the default interactive flow ONLY when called without
-    # explicit argv (i.e., user ran the command without any CLI flags).
-    # When argv is explicitly provided (even empty list), use legacy wizard
-    # for backward compatibility with existing tests and noninteractive CLI usage.
-    if argv is not None:
-        # Show deprecation warning for legacy wizard usage
-        if not any(arg.startswith('-') for arg in argv_list):
-            print(
-                "⚠️  Legacy wizard is deprecated and will be removed in v1.0.0.\n"
-                "    Please use wizard v2 (run without CLI flags) or migrate to\n"
-                "    profile-based configuration.\n"
-                "    Quick install: bash install.sh --quick\n",
-                file=sys.stderr,
-            )
-        return _wizard.wizard(argv, env=env, ui=ui)
-    
-    # No explicit argv: check sys.argv for CLI flags
-    cli_argv = sys.argv[1:]
-    has_flags = any(arg.startswith('-') for arg in cli_argv)
-    
-    if has_flags:
-        return _wizard.wizard(cli_argv, env=env, ui=ui)
-    from .wizard_v2_flow import run_wizard_v2
-    return run_wizard_v2(env=env, ui=ui)
+
+    # execute=False: wizard only returns options, main() handles build_plans/apply_plans
+    return run_wizard(env=env, ui=ui, argv=argv_list, execute=False)
 
 
 def main(argv: Iterable[str] | None = None) -> int:
@@ -156,14 +123,12 @@ def main(argv: Iterable[str] | None = None) -> int:
     Supports three modes:
     - Profile management: --profile list|delete|show [name]
     - Quick install: --quick (no wizard, use defaults)
-    - Wizard v2: no flags (interactive 9-step wizard)
-    - Legacy wizard: any other flags (deprecated)
+    - Interactive wizard: all other invocations
     """
     # Parse profile management commands
     args = list(argv) if argv is not None else sys.argv[1:]
     
-    if args and args[0] == "--profile":
-        from .wizard_v2_state import profile_list, profile_delete, profile_show
+    if args and args[0] == "--profile" and len(args) > 1 and args[1] in {"list", "delete", "show"}:
         if len(args) < 2:
             print("Usage: hermes-stack-bootstrap --profile <list|delete|show> [name]", file=sys.stderr)
             return 1

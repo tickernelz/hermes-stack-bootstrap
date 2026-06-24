@@ -6,11 +6,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from hermes_stack_bootstrap.bootstrap_skill_packs import install_optional_skills
-from hermes_stack_bootstrap.cli import InstallerOptions, prompt_yes_no, wizard
+from hermes_stack_bootstrap.bootstrap_prompts import prompt_yes_no
+from hermes_stack_bootstrap.cli import InstallerOptions
 from hermes_stack_bootstrap.bootstrap_data import HMX_KNOWLEDGE_SKILL_PACK, SkillPackSpec
-from hermes_stack_bootstrap.bootstrap_prompts import prompt_missing_runtime_python
 from hermes_stack_bootstrap.bootstrap_skill_packs import stage_skill_pack
-from hermes_stack_bootstrap.hermes_discovery import HermesRuntime
 from hermes_stack_bootstrap.provider_setup import default_hashmicro_context_length
 from tests.helpers import FakeTui
 
@@ -23,55 +22,7 @@ class InstallerUxRegressionTests(unittest.TestCase):
 
         self.assertEqual(tui.events, [("select", "Install Ponytail?", ("Yes", "No"), "No")])
 
-    def test_missing_runtime_skip_uses_select_not_confirm(self):
-        runtime = HermesRuntime(
-            hermes_bin="hermes",
-            hermes_bin_source="test",
-            hermes_python=None,
-            hermes_python_source="missing",
-        )
-        tui = FakeTui(["Skip Mnemosyne"])
 
-        _runtime, skip = prompt_missing_runtime_python(runtime, tui)
-
-        self.assertTrue(skip)
-        self.assertFalse(any(event[0] == "confirm" for event in tui.events))
-
-    def test_wizard_uses_saved_skill_defaults_but_still_prompts_as_selects(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            base_home = Path(tmp)
-            (base_home / ".hermes-stack-bootstrap.json").write_text(
-                '{"install_superpowers": true, "install_hmx_knowledge": true, "install_impeccable": false, "install_ponytail": true}',
-                encoding="utf-8",
-            )
-            tui = FakeTui(
-                [
-                    "Plugin & skill only",
-                    None,
-                    ["default"],
-                    "Yes",
-                    "Yes",
-                    "glpat-old",
-                    "No",
-                    "Yes",
-                ]
-            )
-            with (
-                patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=base_home),
-                patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
-            ):
-                options = wizard([], env={}, ui=tui)
-
-        self.assertTrue(options.install_superpowers)
-        self.assertTrue(options.install_hmx_knowledge)
-        self.assertFalse(options.install_impeccable)
-        self.assertTrue(options.install_ponytail)
-        self.assertFalse(any(event[0] == "confirm" for event in tui.events))
-        prompts = [event[1] for event in tui.events if event[0] == "select"]
-        self.assertIn("Install Obra Superpowers skill pack?", prompts)
-        self.assertIn("Install HMX knowledge skill pack?", prompts)
-        self.assertIn("Install Impeccable design skill?", prompts)
-        self.assertIn("Install strongly recommended Ponytail skill pack?", prompts)
 
     def test_existing_direct_skill_install_is_replaced_by_vendor_copy(self):
         with tempfile.TemporaryDirectory() as tmp:
