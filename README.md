@@ -104,7 +104,7 @@ bash install.sh --install-ponytail
 GITLAB_TOKEN=glpat_xxx bash install.sh --install-hmx-knowledge
 ```
 
-Optional skill-pack installs are isolated: if one pack fails, the installer warns, skips that pack, and continues with the rest. Existing direct skill installs are moved aside before the refreshed vendor copy is staged.
+Optional skill-pack installs are isolated: if one pack fails, the installer warns, skips that pack, and continues with the rest. Existing active skills with the same `name:` manifest are backed up before the refreshed vendor copy is staged, so reruns do not leave duplicate HMX/Impeccable/Ponytail skills active.
 
 ```bash
 # Pin progress-tail version/ref

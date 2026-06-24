@@ -143,6 +143,8 @@ Do not install repo scaffolding as Hermes skills:
 
 Older bad repo-root skill installs should be moved aside under profile backups, not deleted blindly.
 
+If an installed skill already has the same `name:` manifest as an incoming optional skill, move the installed copy aside under profile backups and install the refreshed bootstrap-managed copy. Avoid active duplicate skill names; Hermes recursive discovery can otherwise shadow or load the wrong skill.
+
 If an optional skill pack fails to clone/install, warn and continue with the remaining optional packs. A GitLab token rate limit must not abort unrelated skill installs or the rest of the bootstrap.
 
 ## SOUL.md generation rules

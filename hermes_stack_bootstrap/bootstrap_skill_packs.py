@@ -72,6 +72,10 @@ def skill_pack_skill_dirs(source_root: Path, spec: SkillPackSpec) -> list[Path]:
 def skill_pack_backup_path(dest: Path, spec: SkillPackSpec) -> Path:
     if dest.parent.name == "vendor" and dest.parent.parent.name == "skills":
         backup_root = dest.parent.parent.parent / "backups"
+    elif dest.parent.name == "skills":
+        backup_root = dest.parent.parent / "backups"
+    elif "skills" in dest.parts:
+        backup_root = dest.parents[len(dest.parts) - dest.parts.index("skills") - 1] / "backups"
     else:
         backup_root = dest.parent / "backups"
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -83,6 +87,18 @@ def skill_pack_backup_path(dest: Path, spec: SkillPackSpec) -> Path:
     return backup
 
 
+def skill_backup_path(skills_root: Path, skill_name: str) -> Path:
+    backup_root = skills_root.parent / "backups"
+    safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", skill_name).strip("-") or "skill"
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup = backup_root / f"{safe_name}-skill-backup-{timestamp}"
+    suffix = 1
+    while backup.exists():
+        backup = backup_root / f"{safe_name}-skill-backup-{timestamp}-{suffix}"
+        suffix += 1
+    return backup
+
+
 def move_aside_repo_root_skill_install(dest: Path, spec: SkillPackSpec) -> Path:
     backup = skill_pack_backup_path(dest, spec)
     backup.parent.mkdir(parents=True, exist_ok=True)
@@ -90,21 +106,43 @@ def move_aside_repo_root_skill_install(dest: Path, spec: SkillPackSpec) -> Path:
     return backup
 
 
-def existing_direct_skill_path(dest: Path, skill_name: str) -> Path | None:
-    if dest.parent.name != "vendor" or dest.parent.parent.name != "skills":
-        return None
-    candidate = dest.parent.parent / skill_name
-    return candidate if candidate.exists() else None
+def manifest_skill_name(skill_dir: Path, fallback: str) -> str:
+    manifest = skill_dir / "SKILL.md"
+    if not manifest.is_file():
+        return fallback
+    for line in manifest.read_text(encoding="utf-8").splitlines():
+        match = re.match(r"\s*name:\s*['\"]?([^'\"#]+)", line)
+        if match:
+            return match.group(1).strip()
+    return fallback
 
 
-def replace_existing_direct_skill_install(dest: Path, skill_name: str, spec: SkillPackSpec) -> None:
-    direct = existing_direct_skill_path(dest, skill_name)
-    if direct is None:
+def skills_root_for_vendor_dest(dest: Path) -> Path | None:
+    if dest.parent.name == "vendor" and dest.parent.parent.name == "skills":
+        return dest.parent.parent
+    return None
+
+
+def existing_skill_paths_by_name(skills_root: Path, skill_name: str) -> list[Path]:
+    paths: list[Path] = []
+    for manifest in sorted(skills_root.rglob("SKILL.md")):
+        skill_dir = manifest.parent
+        if manifest_skill_name(skill_dir, skill_dir.name) == skill_name:
+            paths.append(skill_dir)
+    return paths
+
+
+def replace_existing_skill_installs_by_name(dest: Path, skill_name: str, target: Path, spec: SkillPackSpec) -> None:
+    skills_root = skills_root_for_vendor_dest(dest)
+    if skills_root is None or not skills_root.exists():
         return
-    backup = skill_pack_backup_path(direct, spec)
-    backup.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(direct), str(backup))
-    print(f"Moved existing {skill_name} skill aside before installing updated {spec.name}: {backup}")
+    for existing in existing_skill_paths_by_name(skills_root, skill_name):
+        if not existing.exists() or existing == target or target in existing.parents or existing in target.parents:
+            continue
+        backup = skill_backup_path(skills_root, skill_name)
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(existing), str(backup))
+        print(f"Moved existing {skill_name} skill aside before installing updated {spec.name}: {backup}")
 
 
 def staged_skill_dir_name(skill_dir: Path, spec: SkillPackSpec) -> str:
@@ -167,7 +205,8 @@ def stage_skill_pack(source_root: Path, dest: Path, spec: SkillPackSpec) -> None
     for skill_dir in skill_dirs:
         target_name = staged_skill_dir_name(skill_dir, spec)
         target = dest / target_name
-        replace_existing_direct_skill_install(dest, target_name, spec)
+        incoming_skill_name = target_name if spec.skill_name_prefix else manifest_skill_name(skill_dir, target_name)
+        replace_existing_skill_installs_by_name(dest, incoming_skill_name, target, spec)
         shutil.copytree(skill_dir, target, dirs_exist_ok=True)
         rewrite_staged_skill_manifest(target / "SKILL.md", target_name, spec)
         rewrite_staged_skill_support_files(target, spec)
