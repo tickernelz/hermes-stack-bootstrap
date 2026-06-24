@@ -19,7 +19,7 @@ It installs into your own Hermes profile. It does **not** ask you to copy someon
 Skip the wizard and use sensible defaults:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.2.1/install.sh | bash -s -- --quick
+curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.2.3/install.sh | bash -s -- --quick
 ```
 
 This installs the full stack with recommended defaults:
@@ -32,7 +32,7 @@ This installs the full stack with recommended defaults:
 Run the 9-step guided installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.2.1/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.2.3/install.sh | bash
 ```
 
 The wizard will guide you through:
@@ -51,7 +51,7 @@ The wizard will guide you through:
 See what would be installed without making changes:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.2.1/install.sh | bash -s -- --dry-run
+curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.2.3/install.sh | bash -s -- --dry-run
 ```
 
 ## Install modes
