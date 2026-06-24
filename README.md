@@ -178,8 +178,11 @@ bash install.sh --install-ponytail
 XAI_HASHMICRO_API_KEY=sk-xxx bash install.sh --yes \
   --setup-hashmicro-provider \
   --main-model gpt-5.5 \
+  --main-context-length 400K \
   --delegation-model gpt-5.5-medium \
-  --aux-all-model gpt-5.4-mini
+  --delegation-context-length 400K \
+  --aux-all-model gpt-5.4-mini \
+  --aux-all-context-length 409600
 
 # pin progress-tail
 bash install.sh --progress-tail-ref v0.1.81
@@ -195,12 +198,16 @@ bash install.sh \
 
 ## HashMicro provider setup
 
-Interactive full installs ask whether to configure the recommended OpenAI-compatible xAI HashMicro provider. If accepted, the wizard reads `XAI_HASHMICRO_API_KEY` from the environment or prompts for it hidden, fetches live model IDs from `/v1/models` when possible, then asks for:
+Interactive full installs ask whether to configure the recommended OpenAI-compatible xAI HashMicro provider. If accepted, the wizard reads `XAI_HASHMICRO_API_KEY` from the environment or prompts for it hidden, fetches live model IDs and exposed context metadata from `/v1/models` when possible, then asks for:
 
 - main Hermes model
-- `delegate_task` model
-- default auxiliary model
-- optional per-auxiliary-task overrides
+- reasoning effort (`xhigh` default; applied as the HashMicro model suffix such as `gpt-5.5-xhigh`)
+- main model context length
+- `delegate_task` model and context length
+- default auxiliary model and context length
+- optional per-auxiliary-task model/context overrides
+
+If `/v1/models` does not expose context metadata, the wizard uses conservative fallbacks based on the live HashMicro model list: plain `gpt-5.5` defaults to `272_000`, `gpt-5.5-{medium,high,xhigh}` defaults to `400_000`, GPT-5.5 Codex variants default to the user-confirmed `272_000`, `gpt-5.4*` defaults to `200_000`, and `gpt-5.4-mini*` defaults to `409_600`. Manual context inputs also accept shorthand such as `272K` and `400K`.
 
 The merge writes a named provider and routes through it:
 
@@ -211,15 +218,26 @@ custom_providers:
     key_env: XAI_HASHMICRO_API_KEY
     api_mode: chat_completions
     discover_models: true
+    models:
+      gpt-5.5-xhigh:
+        context_length: 400000
+      gpt-5.4-mini:
+        context_length: 409600
 
 model:
   provider: custom:xai-hashmicro
-  default: gpt-5.5
+  default: gpt-5.5-xhigh
+
+agent:
+  reasoning_effort: xhigh
 
 delegation:
   provider: custom:xai-hashmicro
-  model: gpt-5.5-medium
+  model: gpt-5.5-xhigh
+  reasoning_effort: xhigh
 ```
+
+Context length is intentionally stored only under `custom_providers[].models`; main, delegation, and auxiliary routes only reference `provider` + `model`.
 
 Auxiliary routes use the same named provider and clear stale direct `base_url` / `api_key` values so secrets stay centralized in `.env`.
 
@@ -229,12 +247,16 @@ Non-interactive example:
 XAI_HASHMICRO_API_KEY=sk-xxx bash install.sh --yes \
   --setup-hashmicro-provider \
   --main-model gpt-5.5 \
+  --main-context-length 400K \
   --delegation-model gpt-5.5-medium \
+  --delegation-context-length 400K \
   --aux-all-model gpt-5.4-mini \
-  --aux-model compression=gpt-5.5-medium
+  --aux-all-context-length 409600 \
+  --aux-model compression=gpt-5.5-medium \
+  --aux-context-length compression=400K
 ```
 
-Supported flags: `--hashmicro-base-url`, `--hashmicro-provider-name`, `--hashmicro-key-env`, `--main-model`, `--delegation-model`, `--aux-all-model`, and repeated `--aux-model task=model`.
+Supported flags: `--hashmicro-base-url`, `--hashmicro-provider-name`, `--hashmicro-key-env`, `--main-model`, `--main-context-length`, `--delegation-model`, `--delegation-context-length`, `--aux-all-model`, `--aux-all-context-length`, repeated `--aux-model task=model`, repeated `--aux-context-length task=context_length`, and `--hashmicro-reasoning-effort`.
 
 ## Mnemosyne modes
 

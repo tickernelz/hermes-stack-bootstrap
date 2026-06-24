@@ -36,10 +36,16 @@ from .provider_setup import (
     HASHMICRO_BASE_URL,
     HASHMICRO_KEY_ENV,
     HASHMICRO_PROVIDER_NAME,
+    HASHMICRO_REASONING_EFFORTS,
+    HASHMICRO_DEFAULT_REASONING_EFFORT,
     HashmicroProviderSetup,
     build_hashmicro_env_values,
-    fetch_openai_compatible_models,
+    default_hashmicro_context_length,
+    fetch_openai_compatible_model_metadata,
     merge_hashmicro_provider_config,
+    hashmicro_model_with_reasoning_effort,
+    normalize_hashmicro_reasoning_effort,
+    parse_aux_context_length_overrides,
     parse_aux_model_overrides,
     secret_env_keys,
 )
@@ -231,8 +237,13 @@ class InstallerOptions:
     hashmicro_key_env: str = HASHMICRO_KEY_ENV
     hashmicro_api_key: str = ""
     hashmicro_main_model: str = ""
+    hashmicro_main_context_length: int = 0
     hashmicro_delegation_model: str = ""
+    hashmicro_delegation_context_length: int = 0
     hashmicro_auxiliary_models: Mapping[str, str] = dataclasses.field(default_factory=dict)
+    hashmicro_auxiliary_context_lengths: Mapping[str, int] = dataclasses.field(default_factory=dict)
+    hashmicro_reasoning_effort: str = ""
+    hashmicro_available_models: Sequence[str] = dataclasses.field(default_factory=tuple)
     generate_soul: bool = False
     soul_agent_name: str = ""
     soul_user_name: str = ""
@@ -1282,6 +1293,26 @@ def _env_get(env: os._Environ[str] | dict[str, str], key: str, default: str = ""
     return value if value is not None else default
 
 
+def _positive_int(value: object, *, field: str) -> int:
+    text = str(value or "").strip().lower().replace(",", "").replace("_", "")
+    if not text:
+        return 0
+    multiplier = 1
+    if text.endswith("k"):
+        multiplier = 1_000
+        text = text[:-1]
+    elif text.endswith("m"):
+        multiplier = 1_000_000
+        text = text[:-1]
+    try:
+        parsed = int(float(text) * multiplier)
+    except ValueError as exc:
+        raise ValueError(f"{field} must be a positive integer") from exc
+    if parsed <= 0:
+        raise ValueError(f"{field} must be a positive integer")
+    return parsed
+
+
 def validate_embedding_options(
     *,
     mode: str,
@@ -1324,16 +1355,89 @@ def hashmicro_auxiliary_models_from_args(args: argparse.Namespace) -> dict[str, 
     return models
 
 
+def hashmicro_auxiliary_context_lengths_from_args(
+    args: argparse.Namespace,
+    auxiliary_models: Mapping[str, str] | None = None,
+    *,
+    reasoning_effort: str = "",
+    available_models: Iterable[str] | None = None,
+) -> dict[str, int]:
+    contexts: dict[str, int] = {}
+    aux_all = _positive_int(getattr(args, "aux_all_context_length", ""), field="--aux-all-context-length")
+    if aux_all:
+        contexts.update({task: aux_all for task in AUXILIARY_TASKS})
+    contexts.update(parse_aux_context_length_overrides(getattr(args, "aux_context_length", []) or []))
+    detected_contexts = getattr(args, "hashmicro_detected_model_contexts", {}) or {}
+    for task, model in (auxiliary_models or {}).items():
+        if task not in contexts:
+            effective_model = _hashmicro_effective_model(str(model), reasoning_effort, available_models)
+            contexts[task] = _context_default_for_model(effective_model, detected_contexts)
+    return {task: context for task, context in contexts.items() if context}
+
+
+def _hashmicro_effective_model(model: str, effort: str, available_models: Iterable[str] | None = None) -> str:
+    return hashmicro_model_with_reasoning_effort(model, effort, available_models) if effort else str(model or "").strip()
+
+
+def _hashmicro_effective_auxiliary_models(options: InstallerOptions) -> dict[str, str]:
+    effort = normalize_hashmicro_reasoning_effort(options.hashmicro_reasoning_effort)
+    return {
+        task: _hashmicro_effective_model(model, effort, options.hashmicro_available_models)
+        for task, model in options.hashmicro_auxiliary_models.items()
+        if str(model or "").strip()
+    }
+
+
+def _set_hashmicro_model_context(contexts: dict[str, int], model: str, context_length: int) -> None:
+    if not model or not context_length:
+        return
+    if model in contexts and contexts[model] != int(context_length):
+        raise ValueError(
+            f"Conflicting context lengths for HashMicro model {model}: "
+            f"{contexts[model]} vs {int(context_length)}"
+        )
+    contexts[model] = int(context_length)
+
+
+def hashmicro_model_context_lengths_from_options(options: InstallerOptions) -> dict[str, int]:
+    contexts: dict[str, int] = {}
+    effort = normalize_hashmicro_reasoning_effort(options.hashmicro_reasoning_effort)
+    if options.hashmicro_main_model and options.hashmicro_main_context_length:
+        _set_hashmicro_model_context(
+            contexts,
+            _hashmicro_effective_model(options.hashmicro_main_model, effort, options.hashmicro_available_models),
+            int(options.hashmicro_main_context_length),
+        )
+    if options.hashmicro_delegation_model and options.hashmicro_delegation_context_length:
+        _set_hashmicro_model_context(
+            contexts,
+            _hashmicro_effective_model(options.hashmicro_delegation_model, effort, options.hashmicro_available_models),
+            int(options.hashmicro_delegation_context_length),
+        )
+    for task, model in options.hashmicro_auxiliary_models.items():
+        context_length = int(options.hashmicro_auxiliary_context_lengths.get(task, 0) or 0)
+        if model and context_length:
+            _set_hashmicro_model_context(
+                contexts,
+                _hashmicro_effective_model(str(model), effort, options.hashmicro_available_models),
+                context_length,
+            )
+    return contexts
+
+
 def hashmicro_setup_from_options(options: InstallerOptions) -> HashmicroProviderSetup:
+    effort = normalize_hashmicro_reasoning_effort(options.hashmicro_reasoning_effort)
     return HashmicroProviderSetup(
         enabled=options.setup_hashmicro_provider,
         base_url=options.hashmicro_base_url,
         provider_name=options.hashmicro_provider_name,
         key_env=options.hashmicro_key_env,
         api_key=options.hashmicro_api_key,
-        main_model=options.hashmicro_main_model,
-        delegation_model=options.hashmicro_delegation_model,
-        auxiliary_models=options.hashmicro_auxiliary_models,
+        main_model=_hashmicro_effective_model(options.hashmicro_main_model, effort, options.hashmicro_available_models),
+        delegation_model=_hashmicro_effective_model(options.hashmicro_delegation_model, effort, options.hashmicro_available_models),
+        auxiliary_models=_hashmicro_effective_auxiliary_models(options),
+        model_context_lengths=hashmicro_model_context_lengths_from_options(options),
+        reasoning_effort=options.hashmicro_reasoning_effort,
     )
 
 
@@ -1341,7 +1445,24 @@ def apply_hashmicro_env_defaults(args: argparse.Namespace, env: os._Environ[str]
     if not getattr(args, "setup_hashmicro_provider", False):
         return
     key_env = str(getattr(args, "hashmicro_key_env", "") or HASHMICRO_KEY_ENV).strip()
-    args.hashmicro_api_key = _env_get(env, key_env, "")
+    if not getattr(args, "hashmicro_api_key", ""):
+        args.hashmicro_api_key = _env_get(env, key_env, "")
+
+
+def populate_hashmicro_model_metadata(args: argparse.Namespace) -> None:
+    if not getattr(args, "setup_hashmicro_provider", False):
+        return
+    if getattr(args, "hashmicro_detected_models", None):
+        return
+    if not getattr(args, "hashmicro_api_key", ""):
+        return
+    try:
+        models, contexts = fetch_openai_compatible_model_metadata(args.hashmicro_base_url, args.hashmicro_api_key)
+    except Exception as exc:
+        print(f"Warning: could not fetch HashMicro model list: {exc}", file=sys.stderr)
+        return
+    args.hashmicro_detected_models = tuple(models)
+    args.hashmicro_detected_model_contexts = contexts
 
 
 def validate_soul_options(args: argparse.Namespace) -> None:
@@ -1437,6 +1558,36 @@ def choose_model_from_options(tui: RichPromptTui, prompt: str, models: list[str]
     return tui.text(f"{prompt} (manual)", current)
 
 
+def _context_default_for_model(model: str, detected_contexts: Mapping[str, int] | None = None) -> int:
+    # User-confirmed correction: GPT-5.5 Codex variants are 272K even if a
+    # live endpoint reports a larger generic context value.
+    model_name = str(model or "")
+    if "gpt-5.5" in model_name.lower() and "codex" in model_name.lower():
+        return 272_000
+    detected = detected_contexts or {}
+    return int(detected.get(model_name) or default_hashmicro_context_length(model_name) or 0)
+
+
+def prompt_hashmicro_context_length(
+    tui: RichPromptTui,
+    prompt: str,
+    model: str,
+    detected_contexts: Mapping[str, int] | None = None,
+    current: object = "",
+) -> int:
+    default_value = _positive_int(current, field=prompt) or _context_default_for_model(model, detected_contexts)
+    answer = tui.text(prompt, str(default_value) if default_value else "")
+    return _positive_int(answer, field=prompt)
+
+
+def choose_hashmicro_reasoning_effort(tui: RichPromptTui, current: str = "") -> str:
+    default = normalize_hashmicro_reasoning_effort(current, default=HASHMICRO_DEFAULT_REASONING_EFFORT)
+    return normalize_hashmicro_reasoning_effort(
+        tui.select("HashMicro reasoning effort", HASHMICRO_REASONING_EFFORTS, default),
+        default=HASHMICRO_DEFAULT_REASONING_EFFORT,
+    )
+
+
 def prompt_hashmicro_provider_setup(args: argparse.Namespace, tui: RichPromptTui, env: os._Environ[str] | dict[str, str]) -> None:
     if not prompt_yes_no("Configure recommended xAI HashMicro provider?", bool(args.setup_hashmicro_provider), tui):
         return
@@ -1445,27 +1596,69 @@ def prompt_hashmicro_provider_setup(args: argparse.Namespace, tui: RichPromptTui
         args.hashmicro_api_key = _env_get(env, args.hashmicro_key_env, "")
     if not args.hashmicro_api_key:
         args.hashmicro_api_key = tui.password("HashMicro API key (hidden; saved as XAI_HASHMICRO_API_KEY)").strip()
-    models: list[str] = []
-    if args.hashmicro_api_key:
+    models: list[str] = list(getattr(args, "hashmicro_detected_models", ()) or [])
+    detected_contexts: dict[str, int] = dict(getattr(args, "hashmicro_detected_model_contexts", {}) or {})
+    if args.hashmicro_api_key and not models:
         try:
-            models = fetch_openai_compatible_models(args.hashmicro_base_url, args.hashmicro_api_key)
+            models, detected_contexts = fetch_openai_compatible_model_metadata(args.hashmicro_base_url, args.hashmicro_api_key)
         except Exception as exc:
             print(f"Warning: could not fetch HashMicro model list: {exc}", file=sys.stderr)
     args.hashmicro_detected_models = tuple(models)
+    args.hashmicro_detected_model_contexts = detected_contexts
     args.main_model = choose_model_from_options(tui, "HashMicro main model", models, args.main_model)
+    args.hashmicro_reasoning_effort = choose_hashmicro_reasoning_effort(
+        tui,
+        getattr(args, "hashmicro_reasoning_effort", "") or HASHMICRO_DEFAULT_REASONING_EFFORT,
+    )
+    args.main_context_length = str(
+        prompt_hashmicro_context_length(
+            tui,
+            "HashMicro main context length",
+            _hashmicro_effective_model(args.main_model, args.hashmicro_reasoning_effort, models),
+            detected_contexts,
+            getattr(args, "main_context_length", ""),
+        )
+    )
     args.delegation_model = choose_model_from_options(tui, "HashMicro delegation model", models, args.delegation_model or args.main_model)
+    args.delegation_context_length = str(
+        prompt_hashmicro_context_length(
+            tui,
+            "HashMicro delegation context length",
+            _hashmicro_effective_model(args.delegation_model, args.hashmicro_reasoning_effort, models),
+            detected_contexts,
+            getattr(args, "delegation_context_length", ""),
+        )
+    )
     aux_default = choose_model_from_options(tui, "HashMicro default auxiliary model", models, getattr(args, "aux_all_model", "") or args.delegation_model or args.main_model)
     args.aux_all_model = aux_default
+    args.aux_all_context_length = str(
+        prompt_hashmicro_context_length(
+            tui,
+            "HashMicro default auxiliary context length",
+            _hashmicro_effective_model(aux_default, args.hashmicro_reasoning_effort, models),
+            detected_contexts,
+            getattr(args, "aux_all_context_length", ""),
+        )
+    )
     if aux_default:
         args.aux_model = [override for override in (getattr(args, "aux_model", []) or []) if "=" in override]
     if prompt_yes_no("Customize per auxiliary task?", False, tui):
         overrides = parse_aux_model_overrides(args.aux_model or [])
+        context_overrides = parse_aux_context_length_overrides(getattr(args, "aux_context_length", []) or [])
         for task in AUXILIARY_TASKS:
             current = overrides.get(task, aux_default)
             selected = choose_model_from_options(tui, f"HashMicro auxiliary model for {task}", models, current)
             if selected:
                 overrides[task] = selected
+                context_overrides[task] = prompt_hashmicro_context_length(
+                    tui,
+                    f"HashMicro auxiliary context length for {task}",
+                    _hashmicro_effective_model(selected, args.hashmicro_reasoning_effort, models),
+                    detected_contexts,
+                    context_overrides.get(task) or args.aux_all_context_length,
+                )
         args.aux_model = [f"{task}={model}" for task, model in overrides.items()]
+        args.aux_context_length = [f"{task}={context}" for task, context in context_overrides.items()]
 
 
 def hashmicro_provider_choice_from_args(args: argparse.Namespace) -> ProviderChoice | None:
@@ -1640,15 +1833,26 @@ def wizard(
     parser.add_argument("--hashmicro-provider-name", default=_env_get(runtime_env, "HERMES_STACK_HASHMICRO_PROVIDER_NAME", HASHMICRO_PROVIDER_NAME))
     parser.add_argument("--hashmicro-key-env", default=_env_get(runtime_env, "HERMES_STACK_HASHMICRO_KEY_ENV", HASHMICRO_KEY_ENV))
     parser.add_argument("--main-model", default=_env_get(runtime_env, "HERMES_STACK_MAIN_MODEL", ""), help="Main Hermes model when --setup-hashmicro-provider is enabled.")
+    parser.add_argument("--main-context-length", default=_env_get(runtime_env, "HERMES_STACK_MAIN_CONTEXT_LENGTH", ""), help="Context length for the selected HashMicro main model, stored under custom_providers[].models.")
     parser.add_argument("--delegation-model", default=_env_get(runtime_env, "HERMES_STACK_DELEGATION_MODEL", ""), help="delegate_task model when --setup-hashmicro-provider is enabled.")
+    parser.add_argument("--delegation-context-length", default=_env_get(runtime_env, "HERMES_STACK_DELEGATION_CONTEXT_LENGTH", ""), help="Context length for the selected HashMicro delegation model, stored under custom_providers[].models.")
     parser.add_argument("--aux-all-model", default=_env_get(runtime_env, "HERMES_STACK_AUX_ALL_MODEL", ""), help="Use one model for all known auxiliary tasks.")
+    parser.add_argument("--aux-all-context-length", default=_env_get(runtime_env, "HERMES_STACK_AUX_ALL_CONTEXT_LENGTH", ""), help="Context length for --aux-all-model, stored under custom_providers[].models.")
     parser.add_argument("--aux-model", action="append", default=[], help="Auxiliary task override in task=model form. Repeatable.")
+    parser.add_argument("--aux-context-length", action="append", default=[], help="Auxiliary context override in task=context_length form. Repeatable.")
+    parser.add_argument(
+        "--hashmicro-reasoning-effort",
+        choices=HASHMICRO_REASONING_EFFORTS,
+        default=_env_get(runtime_env, "HERMES_STACK_HASHMICRO_REASONING_EFFORT", HASHMICRO_DEFAULT_REASONING_EFFORT),
+        help="Reasoning effort for HashMicro main/delegation routes.",
+    )
     args = parser.parse_args(list(argv) if argv is not None else None)
     args.install_mode = normalize_install_mode(args.install_mode)
     if args.yes:
         apply_install_mode_defaults(args)
     apply_full_online_embedding_env_defaults(args, runtime_env)
     apply_hashmicro_env_defaults(args, runtime_env)
+    populate_hashmicro_model_metadata(args)
 
     home = Path(args.home).expanduser() if args.home else detect_base_home(args.hermes_bin or None)
     runtime = discover_hermes_runtime(
@@ -1776,6 +1980,34 @@ def wizard(
     )
     validate_soul_options(args)
 
+    hashmicro_aux_models = hashmicro_auxiliary_models_from_args(args)
+    detected_hashmicro_contexts = getattr(args, "hashmicro_detected_model_contexts", {}) or {}
+    detected_hashmicro_models = tuple(getattr(args, "hashmicro_detected_models", ()) or ())
+    hashmicro_reasoning_effort = ""
+    if args.setup_hashmicro_provider:
+        hashmicro_reasoning_effort = normalize_hashmicro_reasoning_effort(
+            args.hashmicro_reasoning_effort,
+            default=HASHMICRO_DEFAULT_REASONING_EFFORT,
+        )
+    hashmicro_main_context_length = _positive_int(args.main_context_length, field="--main-context-length")
+    if args.setup_hashmicro_provider and args.main_model and not hashmicro_main_context_length:
+        hashmicro_main_context_length = _context_default_for_model(
+            _hashmicro_effective_model(args.main_model, hashmicro_reasoning_effort, detected_hashmicro_models),
+            detected_hashmicro_contexts,
+        )
+    hashmicro_delegation_context_length = _positive_int(args.delegation_context_length, field="--delegation-context-length")
+    if args.setup_hashmicro_provider and args.delegation_model and not hashmicro_delegation_context_length:
+        hashmicro_delegation_context_length = _context_default_for_model(
+            _hashmicro_effective_model(args.delegation_model, hashmicro_reasoning_effort, detected_hashmicro_models),
+            detected_hashmicro_contexts,
+        )
+    hashmicro_aux_contexts = hashmicro_auxiliary_context_lengths_from_args(
+        args,
+        hashmicro_aux_models,
+        reasoning_effort=hashmicro_reasoning_effort,
+        available_models=detected_hashmicro_models,
+    )
+
     return InstallerOptions(
         base_home=home,
         profile=profile,
@@ -1814,8 +2046,13 @@ def wizard(
         hashmicro_key_env=args.hashmicro_key_env,
         hashmicro_api_key=getattr(args, "hashmicro_api_key", ""),
         hashmicro_main_model=args.main_model,
+        hashmicro_main_context_length=hashmicro_main_context_length,
         hashmicro_delegation_model=args.delegation_model,
-        hashmicro_auxiliary_models=hashmicro_auxiliary_models_from_args(args),
+        hashmicro_delegation_context_length=hashmicro_delegation_context_length,
+        hashmicro_auxiliary_models=hashmicro_aux_models,
+        hashmicro_auxiliary_context_lengths=hashmicro_aux_contexts,
+        hashmicro_reasoning_effort=hashmicro_reasoning_effort,
+        hashmicro_available_models=tuple(getattr(args, "hashmicro_detected_models", ()) or ()),
         generate_soul=args.generate_soul,
         soul_agent_name=args.soul_agent_name,
         soul_user_name=args.soul_user_name,

@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import yaml
+
 from hermes_stack_bootstrap.cli import (
     PROGRESS_TAIL_REF,
     InstallerOptions,
@@ -818,19 +820,36 @@ class CliPlanTests(unittest.TestCase):
         self.assertEqual(options.lcm_expansion_model, "openrouter/anthropic/claude-sonnet-4")
 
     def test_wizard_accepts_noninteractive_hashmicro_provider_setup(self):
-        with patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")):
+        with (
+            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
+            patch(
+                "hermes_stack_bootstrap.cli.fetch_openai_compatible_model_metadata",
+                return_value=(
+                    ["gpt-5.5", "gpt-5.5-medium", "gpt-5.5-xhigh", "gpt-5.4-mini"],
+                    {"gpt-5.5": 272000, "gpt-5.5-medium": 400000, "gpt-5.5-xhigh": 400000, "gpt-5.4-mini": 409600},
+                ),
+            ),
+        ):
             options = wizard(
                 [
                     "--yes",
                     "--setup-hashmicro-provider",
                     "--main-model",
                     "gpt-5.5",
+                    "--main-context-length",
+                    "400000",
                     "--delegation-model",
                     "gpt-5.5-medium",
+                    "--delegation-context-length",
+                    "400000",
                     "--aux-all-model",
                     "gpt-5.4-mini",
+                    "--aux-all-context-length",
+                    "409600",
                     "--aux-model",
                     "compression=gpt-5.5-medium",
+                    "--aux-context-length",
+                    "compression=400000",
                     "--skip-mnemosyne",
                 ],
                 env={"XAI_HASHMICRO_API_KEY": "secret-from-env"},
@@ -839,9 +858,41 @@ class CliPlanTests(unittest.TestCase):
         self.assertTrue(options.setup_hashmicro_provider)
         self.assertEqual(options.hashmicro_api_key, "secret-from-env")
         self.assertEqual(options.hashmicro_main_model, "gpt-5.5")
+        self.assertEqual(options.hashmicro_main_context_length, 400000)
         self.assertEqual(options.hashmicro_delegation_model, "gpt-5.5-medium")
+        self.assertEqual(options.hashmicro_delegation_context_length, 400000)
         self.assertEqual(options.hashmicro_auxiliary_models["vision"], "gpt-5.4-mini")
+        self.assertEqual(options.hashmicro_auxiliary_context_lengths["vision"], 409600)
         self.assertEqual(options.hashmicro_auxiliary_models["compression"], "gpt-5.5-medium")
+        self.assertEqual(options.hashmicro_auxiliary_context_lengths["compression"], 400000)
+        self.assertEqual(options.hashmicro_reasoning_effort, "xhigh")
+
+    def test_wizard_uses_272k_for_hashmicro_gpt55_codex_even_if_endpoint_reports_400k(self):
+        with (
+            patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
+            patch(
+                "hermes_stack_bootstrap.cli.fetch_openai_compatible_model_metadata",
+                return_value=(
+                    ["codex/gpt-5.5", "codex/gpt-5.5-xhigh"],
+                    {"codex/gpt-5.5": 400000, "codex/gpt-5.5-xhigh": 400000},
+                ),
+            ),
+        ):
+            options = wizard(
+                [
+                    "--yes",
+                    "--setup-hashmicro-provider",
+                    "--main-model",
+                    "codex/gpt-5.5",
+                    "--delegation-model",
+                    "codex/gpt-5.5",
+                    "--skip-mnemosyne",
+                ],
+                env={"XAI_HASHMICRO_API_KEY": "secret-from-env"},
+            )
+
+        self.assertEqual(options.hashmicro_main_context_length, 272000)
+        self.assertEqual(options.hashmicro_delegation_context_length, 272000)
 
     def test_merge_config_and_env_applies_hashmicro_provider_without_leaking_secret_to_config(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -853,19 +904,35 @@ class CliPlanTests(unittest.TestCase):
                 setup_hashmicro_provider=True,
                 hashmicro_api_key="super-secret",
                 hashmicro_main_model="gpt-5.5",
+                hashmicro_main_context_length=400000,
                 hashmicro_delegation_model="gpt-5.5-medium",
+                hashmicro_delegation_context_length=400000,
                 hashmicro_auxiliary_models={"compression": "gpt-5.4-mini"},
+                hashmicro_auxiliary_context_lengths={"compression": 409600},
+                hashmicro_reasoning_effort="xhigh",
+                hashmicro_available_models=("gpt-5.5", "gpt-5.5-medium", "gpt-5.5-xhigh", "gpt-5.4-mini"),
             )
             plan = build_plan(options)
 
             merge_config_and_env(plan)
 
             config_text = (Path(tmp) / "config.yaml").read_text(encoding="utf-8")
+            config = yaml.safe_load(config_text)
             env_text = (Path(tmp) / ".env").read_text(encoding="utf-8")
 
-        self.assertIn("provider: custom:xai-hashmicro", config_text)
-        self.assertIn("default: gpt-5.5", config_text)
-        self.assertIn("model: gpt-5.5-medium", config_text)
+        provider = next(item for item in config["custom_providers"] if item["name"] == "xai-hashmicro")
+        self.assertEqual(provider["models"]["gpt-5.5-xhigh"]["context_length"], 400000)
+        self.assertEqual(provider["models"]["gpt-5.4-mini"]["context_length"], 409600)
+        self.assertEqual(config["model"]["provider"], "custom:xai-hashmicro")
+        self.assertEqual(config["model"]["default"], "gpt-5.5-xhigh")
+        self.assertNotIn("context_length", config["model"])
+        self.assertEqual(config["delegation"]["provider"], "custom:xai-hashmicro")
+        self.assertEqual(config["delegation"]["model"], "gpt-5.5-xhigh")
+        self.assertEqual(config["delegation"]["reasoning_effort"], "xhigh")
+        self.assertEqual(config["agent"]["reasoning_effort"], "xhigh")
+        self.assertEqual(config["auxiliary"]["compression"]["provider"], "custom:xai-hashmicro")
+        self.assertEqual(config["auxiliary"]["compression"]["model"], "gpt-5.4-mini")
+        self.assertNotIn("context_length", config["auxiliary"]["compression"])
         self.assertIn("XAI_HASHMICRO_API_KEY=super-secret", env_text)
         self.assertNotIn("super-secret", config_text)
 
@@ -931,8 +998,12 @@ class CliPlanTests(unittest.TestCase):
             True,  # setup recommended HashMicro provider
             "hm-secret",  # HashMicro API key
             "gpt-5.5",  # main model
+            None,  # reasoning effort = xhigh default
+            None,  # main context length = live default for gpt-5.5
             "gpt-5.5-medium",  # delegation model
+            None,  # delegation context length = live default for gpt-5.5-medium
             "gpt-5.4-mini",  # auxiliary default model
+            None,  # auxiliary default context length
             False,  # do not customize per auxiliary task
             "hybrid",  # Mnemosyne mode
             None,  # Mnemosyne provider = default
@@ -946,21 +1017,36 @@ class CliPlanTests(unittest.TestCase):
         with (
             patch("hermes_stack_bootstrap.cli.detect_base_home", return_value=Path("/srv/hermes")),
             patch("hermes_stack_bootstrap.cli.provider_choices", return_value=[]),
-            patch("hermes_stack_bootstrap.cli.fetch_openai_compatible_models", return_value=["gpt-5.5", "gpt-5.5-medium", "gpt-5.4-mini"]),
+            patch(
+                "hermes_stack_bootstrap.cli.fetch_openai_compatible_model_metadata",
+                return_value=(
+                    ["gpt-5.5", "gpt-5.5-medium", "gpt-5.5-xhigh", "gpt-5.4-mini"],
+                    {"gpt-5.5": 272000, "gpt-5.5-medium": 400000, "gpt-5.5-xhigh": 400000, "gpt-5.4-mini": 409600},
+                ),
+            ),
         ):
             options = wizard([], ui=tui, env={})
 
         self.assertTrue(options.setup_hashmicro_provider)
         self.assertEqual(options.hashmicro_api_key, "hm-secret")
         self.assertEqual(options.hashmicro_main_model, "gpt-5.5")
+        self.assertEqual(options.hashmicro_main_context_length, 400000)
         self.assertEqual(options.hashmicro_delegation_model, "gpt-5.5-medium")
+        self.assertEqual(options.hashmicro_delegation_context_length, 400000)
+        self.assertEqual(options.hashmicro_reasoning_effort, "xhigh")
         self.assertEqual(set(options.hashmicro_auxiliary_models), set(AUXILIARY_TASKS))
         self.assertEqual(options.hashmicro_auxiliary_models["compression"], "gpt-5.4-mini")
+        self.assertEqual(options.hashmicro_auxiliary_context_lengths["compression"], 409600)
         prompts = [event[1] for event in tui.events if event[0] in {"select", "confirm", "password"}]
         self.assertLess(prompts.index("Configure recommended xAI HashMicro provider?"), prompts.index("Mnemosyne mode"))
         self.assertIn("HashMicro main model", prompts)
+        self.assertIn("HashMicro reasoning effort", prompts)
         self.assertIn("HashMicro delegation model", prompts)
         self.assertIn("HashMicro default auxiliary model", prompts)
+        text_prompts = [event[1] for event in tui.events if event[0] == "text"]
+        self.assertIn("HashMicro main context length", text_prompts)
+        self.assertIn("HashMicro delegation context length", text_prompts)
+        self.assertIn("HashMicro default auxiliary context length", text_prompts)
         step_titles = [event[1] for event in tui.events if event[0] == "step"]
         self.assertEqual(
             step_titles[:6],
