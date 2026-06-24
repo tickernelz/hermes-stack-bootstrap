@@ -8,6 +8,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +31,7 @@ from .bootstrap_shell import render_command
 from .bootstrap_skill_packs import install_optional_skills
 from .bootstrap_state import save_options_state, state_path_for
 from .bootstrap_tui import RichPromptTui
+from .bootstrap_utils import atomic_write_text
 from .config_merge import build_target_config, read_config, write_config
 from .env_template import build_env_values, managed_env_keys, merge_env_text, render_env_block
 from .provider_setup import build_hashmicro_env_values, merge_hashmicro_provider_config, secret_env_keys
@@ -52,10 +54,10 @@ def install_lcm(plan: InstallPlan) -> None:
         return
     lcm_dir = plan.target_home / "plugins" / "hermes-lcm"
     if lcm_dir.exists():
-        run_command(["git", "-C", str(lcm_dir), "pull", "--ff-only"], dry_run=plan.options.dry_run)
+        run_command(["git", "-C", str(lcm_dir), "pull", "--ff-only"], dry_run=plan.options.dry_run, timeout=600)
     else:
         lcm_dir.parent.mkdir(parents=True, exist_ok=True)
-        run_command(["git", "clone", LCM_REPO, str(lcm_dir)], dry_run=plan.options.dry_run)
+        run_command(["git", "clone", LCM_REPO, str(lcm_dir)], dry_run=plan.options.dry_run, timeout=600)
 
 
 def mnemosyne_packages_satisfied(hermes_python: Path, packages: Sequence[str]) -> bool:
@@ -81,7 +83,23 @@ def mnemosyne_packages_satisfied(hermes_python: Path, packages: Sequence[str]) -
             )
             data = json.loads(Path(report.name).read_text(encoding="utf-8"))
             return not data.get("install")
-        except Exception:
+        except subprocess.CalledProcessError as exc:
+            print(
+                f"Warning: pip dry-run failed (exit {exc.returncode}), assuming packages not satisfied",
+                file=sys.stderr,
+            )
+            return False
+        except subprocess.TimeoutExpired:
+            print("Warning: pip dry-run timed out, assuming packages not satisfied", file=sys.stderr)
+            return False
+        except json.JSONDecodeError as exc:
+            print(f"Warning: could not parse pip report ({exc}), assuming packages not satisfied", file=sys.stderr)
+            return False
+        except OSError as exc:
+            print(f"Warning: pip report read failed ({exc}), assuming packages not satisfied", file=sys.stderr)
+            return False
+        except ValueError as exc:
+            print(f"Warning: invalid pip report ({exc}), assuming packages not satisfied", file=sys.stderr)
             return False
 
 
@@ -109,7 +127,11 @@ def install_mnemosyne(plan: InstallPlan) -> None:
     hermes_py = runtime_python_for_options(plan.options)
     packages = mnemosyne_pip_package_list(plan.options.mnemosyne_mode)
     if plan.options.dry_run:
-        run_command([str(hermes_py), "-m", "pip", "install", "--upgrade", "--no-cache-dir", *packages], dry_run=True)
+        run_command(
+            [str(hermes_py), "-m", "pip", "install", "--upgrade", "--no-cache-dir", *packages],
+            dry_run=True,
+            timeout=600,
+        )
     elif mnemosyne_packages_satisfied(hermes_py, packages):
         print("Mnemosyne packages already installed in Hermes runtime Python. Skipping pip install.")
     else:
@@ -122,9 +144,9 @@ def install_mnemosyne(plan: InstallPlan) -> None:
                     f"{render_command(sudo_command)}"
                 )
             run_command(["sudo", "-v"], dry_run=False)
-            run_command(sudo_command, dry_run=False)
+            run_command(sudo_command, dry_run=False, timeout=600)
         else:
-            run_command(pip_command, dry_run=False)
+            run_command(pip_command, dry_run=False, timeout=600)
     run_command(
         [str(hermes_py), "-m", "mnemosyne.install"],
         dry_run=plan.options.dry_run,
@@ -213,8 +235,8 @@ def merge_config_and_env(plan: InstallPlan) -> None:
         **hmx_env_values(plan.options),
         **build_hashmicro_env_values(hashmicro_setup_from_options(plan.options)),
     }
-    plan.env_path.write_text(
-        merge_env_text(existing_env, env_values, managed_keys=managed_env_keys() | set(env_values))
+    atomic_write_text(
+        plan.env_path, merge_env_text(existing_env, env_values, managed_keys=managed_env_keys() | set(env_values))
     )
 
 
@@ -264,7 +286,7 @@ def apply_soul_generation(plan: InstallPlan, ui: RichPromptTui | None = None) ->
     if soul_path.exists():
         backup_dir = backup_soul_file(soul_path)
         print(f"SOUL.md backup written: {backup_dir}")
-    soul_path.write_text(generated.rstrip() + "\n", encoding="utf-8")
+    atomic_write_text(soul_path, generated.rstrip() + "\n")
     print(f"SOUL.md written: {soul_path}")
 
 

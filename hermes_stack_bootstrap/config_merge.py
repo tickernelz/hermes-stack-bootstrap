@@ -6,6 +6,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
+from .bootstrap_utils import atomic_write_text
+
 
 REQUIRED_PLUGINS = ("hermes-lcm", "mnemosyne")
 
@@ -174,6 +176,5 @@ def read_config(path: Path) -> dict[str, Any]:
 
 def write_config(path: Path, config: dict[str, Any]) -> None:
     yaml = _yaml_module()
-    path.parent.mkdir(parents=True, exist_ok=True)
     text = yaml.safe_dump(config, sort_keys=False, allow_unicode=True)
-    path.write_text(text)
+    atomic_write_text(path, text)

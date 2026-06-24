@@ -36,63 +36,7 @@ from hermes_stack_bootstrap.hermes_discovery import HermesRuntime
 from hermes_stack_bootstrap.hermes_models import ProviderChoice
 from hermes_stack_bootstrap.provider_setup import AUXILIARY_TASKS
 from hermes_stack_bootstrap.soul_generator import DEFAULT_SOUL_COMMUNICATION_STYLE, DEFAULT_SOUL_LANGUAGE
-
-
-class FakeTui:
-    def __init__(self, answers):
-        self.answers = list(answers)
-        self.events = []
-
-    def _pop(self):
-        if not self.answers:
-            raise AssertionError("FakeTui ran out of answers")
-        return self.answers.pop(0)
-
-    def banner(self, title: str, subtitle: str) -> None:
-        self.events.append(("banner", title, subtitle))
-
-    def step(self, title: str) -> None:
-        self.events.append(("step", title))
-
-    def text(self, prompt: str, default: str = "") -> str:
-        self.events.append(("text", prompt, default))
-        answer = self._pop()
-        return default if answer is None else answer
-
-    def confirm(self, prompt: str, default: bool = False) -> bool:
-        self.events.append(("confirm", prompt, default))
-        answer = self._pop()
-        return default if answer is None else bool(answer)
-
-    def select(self, prompt: str, choices, default: str = "") -> str:
-        self.events.append(("select", prompt, tuple(choices), default))
-        answer = self._pop()
-        return default if answer is None else answer
-
-    def multi_select(self, prompt: str, choices, defaults=()):
-        self.events.append(("multi_select", prompt, tuple(choices), tuple(defaults)))
-        answer = self._pop()
-        return tuple(defaults) if answer is None else tuple(answer)
-
-    def password(self, prompt: str) -> str:
-        self.events.append(("password", prompt))
-        return self._pop()
-
-    def status(self, message: str):
-        events = self.events
-
-        class StatusRecorder:
-            def __enter__(self):
-                events.append(("status_start", message))
-
-            def __exit__(self, exc_type, exc, tb):
-                events.append(("status_stop", message))
-                return False
-
-        return StatusRecorder()
-
-    def runtime_summary(self, runtime) -> None:
-        self.events.append(("runtime", runtime.hermes_bin, runtime.hermes_python))
+from tests.helpers import FakeTui
 
 
 class CliPlanTestsPart2(unittest.TestCase):
@@ -282,6 +226,50 @@ class CliPlanTestsPart2(unittest.TestCase):
             self.assertTrue(
                 mnemosyne_packages_satisfied(Path("/venv/bin/python"), ["mnemosyne-memory[embeddings]", "sqlite-vec"])
             )
+
+    def test_mnemosyne_packages_satisfied_warns_for_expected_failures(self):
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+        cases = [
+            (
+                {"subprocess.run": {"side_effect": subprocess.CalledProcessError(3, ["pip"])}},
+                "Warning: pip dry-run failed (exit 3), assuming packages not satisfied",
+            ),
+            (
+                {"subprocess.run": {"side_effect": subprocess.TimeoutExpired(["pip"], 120)}},
+                "Warning: pip dry-run timed out, assuming packages not satisfied",
+            ),
+            (
+                {"pathlib.Path.read_text": {"side_effect": OSError("cannot read report")}},
+                "Warning: pip report read failed (cannot read report), assuming packages not satisfied",
+            ),
+            (
+                {"json.loads": {"side_effect": ValueError("missing install key")}},
+                "Warning: invalid pip report (missing install key), assuming packages not satisfied",
+            ),
+            (
+                {"pathlib.Path.read_text": {"return_value": "not json"}},
+                "Warning: could not parse pip report",
+            ),
+        ]
+
+        for patches, expected_warning in cases:
+            with self.subTest(expected_warning=expected_warning):
+                with (
+                    patch("subprocess.run", return_value=completed),
+                    patch("tempfile.NamedTemporaryFile") as named_tmp,
+                    patch("pathlib.Path.read_text", return_value='{"install": []}'),
+                    patch("sys.stderr", new_callable=io.StringIO) as stderr,
+                ):
+                    named_tmp.return_value.__enter__.return_value.name = "/tmp/report.json"
+                    patch_contexts = [patch(target, **kwargs) for target, kwargs in patches.items()]
+                    for patch_context in patch_contexts:
+                        patch_context.start()
+                    try:
+                        self.assertFalse(mnemosyne_packages_satisfied(Path("/venv/bin/python"), ["mnemosyne-memory"]))
+                    finally:
+                        for patch_context in reversed(patch_contexts):
+                            patch_context.stop()
+                    self.assertIn(expected_warning, stderr.getvalue())
 
     def test_mnemosyne_runtime_needs_sudo_detects_non_writable_runtime_paths(self):
         completed = subprocess.CompletedProcess(

@@ -240,7 +240,7 @@ def clone_skill_pack_repo(spec: SkillPackSpec, source_root: Path, *, dry_run: bo
         run_command(command, dry_run=True)
         return
     try:
-        run_command(command, dry_run=False)
+        run_command(command, dry_run=False, timeout=600)
         return
     except subprocess.CalledProcessError:
         if not gitlab_token or "gitlab.com" not in spec.repo_url:
@@ -255,6 +255,7 @@ def clone_skill_pack_repo(spec: SkillPackSpec, source_root: Path, *, dry_run: bo
             ["git", "clone", "--depth=1", gitlab_https_url(spec.repo_url), str(source_root)],
             dry_run=False,
             env=retry_env,
+            timeout=600,
         )
     finally:
         askpass.unlink(missing_ok=True)
