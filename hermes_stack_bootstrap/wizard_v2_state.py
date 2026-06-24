@@ -110,6 +110,44 @@ def list_profiles(base_dir: Path | None = None) -> list[str]:
     return sorted({path.stem for path in paths if path.is_file()})
 
 
+def profile_list(base_dir: Path | None = None) -> dict[str, Path]:
+    """Return dict mapping profile names to their file paths for CLI usage."""
+    directory = profiles_dir(base_dir)
+    profiles = {}
+    try:
+        paths = [*directory.glob("*.yaml"), *directory.glob("*.yml")]
+    except OSError:
+        return profiles
+    
+    for path in paths:
+        if path.is_file():
+            name = path.stem
+            profiles[name] = path
+    
+    return profiles
+
+
+def profile_delete(name: str, base_dir: Path | None = None) -> bool:
+    """Delete a profile by name. Returns True if deleted, False if not found."""
+    path = profile_path(name, base_dir)
+    if path.exists():
+        path.unlink()
+        return True
+    return False
+
+
+def profile_show(name: str, base_dir: Path | None = None) -> dict | None:
+    """Load and return profile data as dict. Returns None if not found."""
+    path = profile_path(name, base_dir)
+    if not path.exists():
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except Exception:
+        return None
+
+
 def load_profile(name: str, base_dir: Path | None = None) -> WizardProfile:
     return load_profile_file(profile_path(name, base_dir))
 

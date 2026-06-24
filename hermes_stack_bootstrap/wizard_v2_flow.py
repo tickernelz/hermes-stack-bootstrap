@@ -431,6 +431,57 @@ def to_installer_options(state: WizardState) -> InstallerOptions:
     )
 
 
+def quick_install(*, env: Mapping[str, str] | None = None, ui: WizardTui | None = None) -> InstallerOptions:
+    """Quick install mode: skip wizard, use recommended defaults.
+    
+    This function bypasses the interactive wizard and returns InstallerOptions
+    with sensible defaults for a standard full-stack installation.
+    """
+    runtime_env = dict(os.environ if env is None else env)
+    state = WizardState(env=runtime_env)
+    tui = ui or ConsoleWizardTui()
+    
+    # Set recommended defaults
+    state.mode = "full"
+    state.home = Path(runtime_env.get("HERMES_HOME", "~/.hermes")).expanduser()
+    state.profile = "default"
+    
+    # Skip provider setup (user can configure later)
+    state.provider_kind = "skip"
+    state.provider_name = ""
+    state.base_url = ""
+    state.key_env = ""
+    state.api_key = ""
+    
+    # Use Hermes defaults for models
+    state.main_model = ""
+    state.context = 0
+    state.delegation_model = ""
+    state.aux = {}
+    state.models = []
+    
+    # Install core components
+    state.components = {"config", "plugins", "skills", "verify"}
+    
+    # Install recommended skill packs
+    state.skill_packs = {"recommended"}
+    state.hmx_token = ""
+    
+    # No dry run, proceed to install
+    state.dry_run = False
+    state.action = "apply"
+    state.save_profile = ""
+    
+    tui.info("🚀 Quick install mode - using recommended defaults")
+    tui.info(f"   Target: {state.home}")
+    tui.info(f"   Profile: {state.profile}")
+    tui.info(f"   Components: {', '.join(sorted(state.components))}")
+    tui.info(f"   Skills: {', '.join(sorted(state.skill_packs))}")
+    
+    options = to_installer_options(state)
+    return options
+
+
 def run_wizard_v2(*, env: Mapping[str, str] | None = None, ui: WizardTui | None = None, execute: bool = True) -> InstallerOptions:
     """Run all nine v2 wizard steps and return the resulting options.
 

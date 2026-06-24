@@ -14,25 +14,44 @@ It installs into your own Hermes profile. It does **not** ask you to copy someon
 
 ## Quick start
 
-Run the latest released installer:
+### Option 1: Quick Install (Recommended)
+
+Skip the wizard and use sensible defaults:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.2.0/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.2.1/install.sh | bash -s -- --quick
 ```
 
-Dry-run first if you want a safe preview:
+This installs the full stack with recommended defaults:
+- LCM, Mnemosyne, and progress-tail plugins
+- Core skills and verification
+- Hermes default models and provider
+
+### Option 2: Interactive Wizard
+
+Run the 9-step guided installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.2.0/install.sh | bash -s -- --dry-run
+curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.2.1/install.sh | bash
 ```
 
-Inspect before running:
+The wizard will guide you through:
+1. Install mode selection
+2. Target home and profile
+3. HashMicro provider setup
+4. Model routing (main, delegation, auxiliary)
+5. Component selection
+6. Skill packs
+7. Skill conflict resolution
+8. Review and confirm
+9. Execute and verify
+
+### Option 3: Dry-Run Preview
+
+See what would be installed without making changes:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.2.0/install.sh
-less install.sh
-bash install.sh --dry-run
-bash install.sh
+curl -fsSL https://raw.githubusercontent.com/tickernelz/hermes-stack-bootstrap/v0.2.1/install.sh | bash -s -- --dry-run
 ```
 
 ## Install modes
@@ -77,13 +96,16 @@ Safety rules:
 ## Common commands
 
 ```bash
-# Wizard
+# Quick install (recommended)
+bash install.sh --quick
+
+# Interactive wizard
 bash install.sh
 
 # Preview only
 bash install.sh --dry-run
 
-# Non-interactive defaults
+# Non-interactive defaults (legacy)
 bash install.sh --yes
 
 # Named profile
@@ -103,6 +125,23 @@ bash install.sh --install-impeccable
 bash install.sh --install-ponytail
 GITLAB_TOKEN=glpat_xxx bash install.sh --install-hmx-knowledge
 ```
+
+## Profile management
+
+The wizard v2 saves your choices to reusable profiles in `~/.config/hermes-stack-bootstrap/profiles/`. Manage them with:
+
+```bash
+# List all saved profiles
+hermes-stack-bootstrap --profile list
+
+# Show profile details
+hermes-stack-bootstrap --profile show <name>
+
+# Delete a profile
+hermes-stack-bootstrap --profile delete <name>
+```
+
+Profiles store non-secret choices (provider config, model routing, skill packs) so you can reuse them across installs or share them with your team. Secrets (API keys, tokens) are never saved to profiles.
 
 Optional skill-pack installs are isolated: if one pack fails, the installer warns, skips that pack, and continues with the rest. Existing active skills with the same `name:` manifest are backed up before the refreshed vendor copy is staged, so reruns do not leave duplicate HMX/Impeccable/Ponytail skills active.
 

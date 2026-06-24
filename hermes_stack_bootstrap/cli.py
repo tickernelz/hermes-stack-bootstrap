@@ -112,11 +112,32 @@ def apply_plans(plans, ui=None) -> None:
 
 def wizard(argv: Iterable[str] | None = None, *, env=None, ui=None):
     _sync_wizard_compat_globals()
+    
+    # Check for --quick flag first
+    if argv is None:
+        argv_list = sys.argv[1:]
+    else:
+        argv_list = list(argv)
+    
+    if "--quick" in argv_list:
+        # Quick install mode: skip wizard, use recommended defaults
+        from .wizard_v2_flow import quick_install
+        return quick_install(env=env, ui=ui)
+    
     # Wizard v2 is the default interactive flow ONLY when called without
     # explicit argv (i.e., user ran the command without any CLI flags).
     # When argv is explicitly provided (even empty list), use legacy wizard
     # for backward compatibility with existing tests and noninteractive CLI usage.
     if argv is not None:
+        # Show deprecation warning for legacy wizard usage
+        if not any(arg.startswith('-') for arg in argv_list):
+            print(
+                "⚠️  Legacy wizard is deprecated and will be removed in v1.0.0.\n"
+                "    Please use wizard v2 (run without CLI flags) or migrate to\n"
+                "    profile-based configuration.\n"
+                "    Quick install: bash install.sh --quick\n",
+                file=sys.stderr,
+            )
         return _wizard.wizard(argv, env=env, ui=ui)
     
     # No explicit argv: check sys.argv for CLI flags
@@ -130,6 +151,64 @@ def wizard(argv: Iterable[str] | None = None, *, env=None, ui=None):
 
 
 def main(argv: Iterable[str] | None = None) -> int:
+    """Main entry point for hermes-stack-bootstrap CLI.
+    
+    Supports three modes:
+    - Profile management: --profile list|delete|show [name]
+    - Quick install: --quick (no wizard, use defaults)
+    - Wizard v2: no flags (interactive 9-step wizard)
+    - Legacy wizard: any other flags (deprecated)
+    """
+    # Parse profile management commands
+    args = list(argv) if argv is not None else sys.argv[1:]
+    
+    if args and args[0] == "--profile":
+        from .wizard_v2_state import profile_list, profile_delete, profile_show
+        if len(args) < 2:
+            print("Usage: hermes-stack-bootstrap --profile <list|delete|show> [name]", file=sys.stderr)
+            return 1
+        
+        cmd = args[1]
+        if cmd == "list":
+            profiles = profile_list()
+            if not profiles:
+                print("No saved profiles found.")
+            else:
+                print("Saved profiles:")
+                for name, path in profiles.items():
+                    print(f"  - {name} ({path})")
+            return 0
+        elif cmd == "delete":
+            if len(args) < 3:
+                print("Usage: hermes-stack-bootstrap --profile delete <name>", file=sys.stderr)
+                return 1
+            name = args[2]
+            if profile_delete(name):
+                print(f"✓ Profile '{name}' deleted.")
+            else:
+                print(f"✗ Profile '{name}' not found.", file=sys.stderr)
+                return 1
+            return 0
+        elif cmd == "show":
+            if len(args) < 3:
+                print("Usage: hermes-stack-bootstrap --profile show <name>", file=sys.stderr)
+                return 1
+            name = args[2]
+            profile = profile_show(name)
+            if profile:
+                print(f"Profile: {name}")
+                print("-" * 40)
+                for key, value in sorted(profile.items()):
+                    print(f"{key}: {value}")
+            else:
+                print(f"✗ Profile '{name}' not found.", file=sys.stderr)
+                return 1
+            return 0
+        else:
+            print(f"Unknown profile command: {cmd}", file=sys.stderr)
+            print("Available commands: list, delete, show", file=sys.stderr)
+            return 1
+    
     try:
         options = wizard(argv)
         plans = build_plans(options)
